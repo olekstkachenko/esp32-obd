@@ -3,6 +3,9 @@ FROM node:20-alpine
 # Create app directory
 WORKDIR /usr/src/app
 
+# Force Node.js to prioritize IPv4 to prevent hanging DNS resolution on Alpine Linux
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
+
 # Install app dependencies
 # A wildcard is used to ensure both package.json AND package-lock.json are copied
 COPY package*.json ./

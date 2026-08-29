@@ -135,18 +135,28 @@ if (botToken) {
     const bot = new Telegraf(botToken, { telegram: { agent } });
     
     const webAppUrl = process.env.WEBAPP_URL || `http://127.0.0.1:${port}`; 
+    console.log("Configured WebApp URL:", webAppUrl);
 
     bot.start((ctx) => {
+      console.log("💬 RECEIVED /start COMMAND!");
       ctx.reply('Привіт! Ваша телеметрія готова.', {
         reply_markup: {
           inline_keyboard: [
             [{ text: "Відкрити OBD Графіки", web_app: { url: webAppUrl } }]
           ]
         }
+      }).then(() => {
+        console.log("✅ Reply successfully sent to user!");
+      }).catch((e) => {
+        console.error("❌ Failed to send reply (maybe URL is invalid?):", e);
       });
     });
+
+    bot.on('message', (ctx) => {
+      console.log("📩 Received a text message:", ctx.message?.text);
+    });
     
-    console.log("Calling bot.launch()...");
+    console.log("Calling bot.launch() (This will start an infinite polling loop)...");
     bot.launch()
       .then(() => console.log("✅ Telegram Bot launched successfully!"))
       .catch((err) => console.error("❌ Telegram Bot failed to launch:", err));

@@ -12,7 +12,14 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const db = new sqlite3.Database('./obd_data.db', (err) => {
+// Create data directory for SQLite if it doesn't exist (important for Docker volumes)
+const fs = require('fs');
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir);
+}
+
+const db = new sqlite3.Database(path.join(dataDir, 'obd_data.db'), (err) => {
   if (err) console.error('Error opening db', err);
 });
 

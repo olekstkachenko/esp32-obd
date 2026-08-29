@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  esp32-obd2-backend:
+    build: .
+    container_name: esp32-obd2-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # Uncomment and fill these if you use Telegram Bot
+      # - TELEGRAM_BOT_TOKEN=your_token_here
+      # - WEBAPP_URL=https://your-domain.com
+    volumes:
+      - obd_data:/usr/src/app/data
+
+volumes:
+  obd_data:

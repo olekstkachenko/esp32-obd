@@ -136,11 +136,18 @@ if (botToken) {
       }
     });
   });
-  bot.launch();
+  
+  // Clean up any old webhooks that might prevent polling from working
+  bot.telegram.deleteWebhook().then(() => {
+    bot.launch()
+      .then(() => console.log("✅ Telegram Bot launched successfully!"))
+      .catch((err) => console.error("❌ Telegram Bot failed to launch:", err));
+  }).catch((err) => console.error("❌ Failed to delete webhook:", err));
+
   process.once('SIGINT', () => bot.stop('SIGINT'));
   process.once('SIGTERM', () => bot.stop('SIGTERM'));
 } else {
-  console.log("TELEGRAM_BOT_TOKEN not provided.");
+  console.log("⚠️ TELEGRAM_BOT_TOKEN not provided.");
 }
 
 app.listen(port, '0.0.0.0', () => {

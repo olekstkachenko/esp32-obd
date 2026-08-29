@@ -9,11 +9,20 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      # Uncomment and fill these if you use Telegram Bot
       # - TELEGRAM_BOT_TOKEN=your_token_here
       # - WEBAPP_URL=https://your-domain.com
     volumes:
       - obd_data:/usr/src/app/data
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: esp32-obd-ngrok
+    restart: unless-stopped
+    depends_on:
+      - esp32-obd2-backend
+    environment:
+      - NGROK_AUTHTOKEN=ВАШ_НОВИЙ_ТОКЕН
+    command: "http --url=ваш-новий-домен.ngrok-free.dev esp32-obd2-backend:3000"
 
 volumes:
   obd_data:

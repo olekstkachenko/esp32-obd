@@ -128,8 +128,12 @@ console.log("Token present in env:", botToken ? "YES" : "NO");
 
 if (botToken) {
   try {
-    console.log("Initializing Telegraf...");
-    const bot = new Telegraf(botToken);
+    console.log("Initializing Telegraf with forced IPv4...");
+    // Force Node.js to use IPv4 only, which fixes the infinite hanging bug in Alpine
+    const https = require('https');
+    const agent = new https.Agent({ family: 4 });
+    const bot = new Telegraf(botToken, { telegram: { agent } });
+    
     const webAppUrl = process.env.WEBAPP_URL || `http://127.0.0.1:${port}`; 
 
     bot.start((ctx) => {

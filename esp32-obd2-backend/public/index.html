@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OBD2 Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header class="glass-header">
+            <h1>Telematics Pro</h1>
+            <div class="status-indicator">
+                <div class="dot pulse"></div> Live
+            </div>
+        </header>
+
+        <!-- Trip Summary -->
+        <section class="trip-summary glass-panel">
+            <div class="trip-header">Current Trip</div>
+            <div class="trip-metrics">
+                <div class="metric-mini">
+                    <span class="label">Distance</span>
+                    <span class="value"><span id="tripDist">0.0</span> km</span>
+                </div>
+                <div class="metric-mini">
+                    <span class="label">Avg Speed</span>
+                    <span class="value"><span id="tripAvgSpeed">0</span> km/h</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Live Metrics Grid -->
+        <main>
+            <div class="metrics-grid">
+                <div class="metric-card glass-panel highlight-blue">
+                    <div class="metric-title">Speed</div>
+                    <div class="metric-value"><span id="currentSpeed">--</span><span class="unit">km/h</span></div>
+                </div>
+                <div class="metric-card glass-panel highlight-red">
+                    <div class="metric-title">Engine</div>
+                    <div class="metric-value"><span id="currentRpm">--</span><span class="unit">RPM</span></div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <div class="metric-title">Coolant Temp</div>
+                    <div class="metric-value"><span id="currentTemp">--</span><span class="unit">°C</span></div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <div class="metric-title">Battery</div>
+                    <div class="metric-value"><span id="currentVolt">--</span><span class="unit">V</span></div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <div class="metric-title">Fuel Rate</div>
+                    <div class="metric-value"><span id="currentFuel">--</span><span class="unit">L/h</span></div>
+                </div>
+            </div>
+
+            <div class="chart-container glass-panel">
+                <canvas id="speedChart"></canvas>
+            </div>
+            
+            <div class="chart-container glass-panel">
+                <canvas id="rpmChart"></canvas>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.ready();
+
+        Chart.defaults.color = 'rgba(255, 255, 255, 0.7)';
+        Chart.defaults.font.family = "'Outfit', sans-serif";
+        const commonOptions = {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { display: false },
+                y: { grid: { color: 'rgba(255, 255, 255, 0.1)' }, beginAtZero: true }
+            },
+            elements: { point: { radius: 0 } }
+        };
+
+        const ctxSpeed = document.getElementById('speedChart').getContext('2d');
+        const speedChart = new Chart(ctxSpeed, {
+            type: 'line',
+            data: { labels: [], datasets: [{ data: [], borderColor: '#36a2eb', borderWidth: 2, tension: 0.4 }] },
+            options: { ...commonOptions, plugins: { title: { display: true, text: 'Speed Timeline', color: '#fff' } } }
+        });
+
+        const ctxRpm = document.getElementById('rpmChart').getContext('2d');
+        const rpmChart = new Chart(ctxRpm, {
+            type: 'line',
+            data: { labels: [], datasets: [{ data: [], borderColor: '#ff6384', borderWidth: 2, tension: 0.4 }] },
+            options: { ...commonOptions, plugins: { title: { display: true, text: 'RPM Timeline', color: '#fff' } } }
+        });
+
+        async function fetchLatest() {
+            try {
+                const res = await fetch('/api/data');
+                const data = await res.json();
+                
+                document.getElementById('tripDist').innerText = data.trip.distance_km.toFixed(1);
+                document.getElementById('tripAvgSpeed').innerText = Math.round(data.trip.avg_speed);
+                
+                document.getElementById('currentSpeed').innerText = Math.round(data.latest.speed || 0);
+                document.getElementById('currentRpm').innerText = Math.round(data.latest.rpm || 0);
+                document.getElementById('currentTemp').innerText = Math.round(data.latest.temp || 0);
+                document.getElementById('currentVolt').innerText = (data.latest.voltage || 0).toFixed(1);
+                document.getElementById('currentFuel').innerText = (data.latest.fuel_rate || 0).toFixed(1);
+            } catch (err) {}
+        }
+
+        async function fetchHistory() {
+            try {
+                const res = await fetch('/api/history');
+                const data = await res.json();
+                const labels = data.map(d => d.timestamp);
+                speedChart.data.labels = labels;
+                speedChart.data.datasets[0].data = data.map(d => d.speed);
+                speedChart.update();
+
+                rpmChart.data.labels = labels;
+                rpmChart.data.datasets[0].data = data.map(d => d.rpm);
+                rpmChart.update();
+            } catch (err) {}
+        }
+
+        fetchLatest();
+        fetchHistory();
+        setInterval(fetchLatest, 2000);
+        setInterval(fetchHistory, 5000);
+    </script>
+</body>
+</html>

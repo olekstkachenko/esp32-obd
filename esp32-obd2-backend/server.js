@@ -122,33 +122,40 @@ app.get('/api/history', (req, res) => {
    });
 });
 
+console.log("--- STARTING TELEGRAM SETUP ---");
 const botToken = process.env.TELEGRAM_BOT_TOKEN;
-if (botToken) {
-  const bot = new Telegraf(botToken);
-  const webAppUrl = process.env.WEBAPP_URL || `http://127.0.0.1:${port}`; 
+console.log("Token present in env:", botToken ? "YES" : "NO");
 
-  bot.start((ctx) => {
-    ctx.reply('Привіт! Ваша телеметрія готова.', {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "Відкрити OBD Графіки", web_app: { url: webAppUrl } }]
-        ]
-      }
+if (botToken) {
+  try {
+    console.log("Initializing Telegraf...");
+    const bot = new Telegraf(botToken);
+    const webAppUrl = process.env.WEBAPP_URL || `http://127.0.0.1:${port}`; 
+
+    bot.start((ctx) => {
+      ctx.reply('Привіт! Ваша телеметрія готова.', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Відкрити OBD Графіки", web_app: { url: webAppUrl } }]
+          ]
+        }
+      });
     });
-  });
-  
-  // Clean up any old webhooks that might prevent polling from working
-  bot.telegram.deleteWebhook().then(() => {
+    
+    console.log("Calling bot.launch()...");
     bot.launch()
       .then(() => console.log("✅ Telegram Bot launched successfully!"))
       .catch((err) => console.error("❌ Telegram Bot failed to launch:", err));
-  }).catch((err) => console.error("❌ Failed to delete webhook:", err));
 
-  process.once('SIGINT', () => bot.stop('SIGINT'));
-  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+    process.once('SIGINT', () => bot.stop('SIGINT'));
+    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  } catch (err) {
+    console.error("❌ Synchronous crash during Telegram setup:", err);
+  }
 } else {
   console.log("⚠️ TELEGRAM_BOT_TOKEN not provided.");
 }
+console.log("--- FINISHED TELEGRAM SETUP ---");
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);

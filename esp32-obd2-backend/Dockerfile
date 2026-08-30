@@ -1,26 +1,34 @@
 FROM node:20-alpine
 
+# Install curl for container health check
+RUN apk add --no-cache curl
+
 # Create app directory
 WORKDIR /usr/src/app
 
 # Force Node.js to prioritize IPv4 to prevent hanging DNS resolution on Alpine Linux
 ENV NODE_OPTIONS="--dns-result-order=ipv4first"
+ENV NODE_ENV=production
 
-# Install app dependencies
-# A wildcard is used to ensure both package.json AND package-lock.json are copied
+# Copy dependency manifests
 COPY package*.json ./
 
-RUN npm install
+# Install production dependencies
+RUN npm ci --only=production
 
-# Bundle app source
+# Copy application source code
 COPY . .
 
-# Create volume for SQLite database persistence
+# Create persistent data directory
+RUN mkdir -p /usr/src/app/data
+
+# Declare volume for persistent data
 VOLUME ["/usr/src/app/data"]
 
-# Modify server.js to use the volume for database if needed, but since server.js uses ./obd_data.db, 
-# we can just map the working directory or change the code slightly.
-# Wait, actually, let's just make the volume mount on /usr/src/app where obd_data.db will be created.
-
 EXPOSE 3000
+
+# Container Healthcheck
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+
 CMD [ "npm", "start" ]

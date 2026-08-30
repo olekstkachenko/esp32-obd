@@ -155,6 +155,69 @@ app.post('/api/obd', async (req, res) => {
   }
 });
 
+// Endpoint for processing offline batch telemetry from ESP32
+app.post('/api/obd/batch', async (req, res) => {
+  const { records } = req.body;
+  if (!Array.isArray(records) || records.length === 0) {
+    return res.status(400).json({ error: 'Масив записів порожній' });
+  }
+
+  try {
+    const tripId = await ensureActiveTrip();
+    let totalAddedDist = 0;
+    let totalAddedFuel = 0;
+    let batchMaxSpeed = 0;
+
+    db.serialize(() => {
+      db.run("BEGIN TRANSACTION");
+      const stmt = db.prepare(`INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate) VALUES (?, ?, ?, ?, ?, ?)`);
+
+      records.forEach((r) => {
+        const rpm = r.rpm || 0;
+        const speed = r.speed || 0;
+        const temp = r.temp || 0;
+        const volt = r.voltage || r.volt || 0;
+        const fuel = r.fuel_rate || r.fuel || 0;
+        const dt = (r.dt && r.dt > 0 && r.dt <= 60) ? r.dt : 1.0;
+
+        if (speed > batchMaxSpeed) batchMaxSpeed = speed;
+
+        const dist = (speed > 0) ? (speed * (dt / 3600.0)) : 0;
+        totalAddedDist += dist;
+
+        if (fuel > 0) {
+          totalAddedFuel += fuel * (dt / 3600.0);
+        } else if (dist > 0) {
+          totalAddedFuel += (dist * 7.5) / 100.0;
+        }
+
+        stmt.run(tripId, rpm, speed, temp, volt, fuel);
+      });
+
+      stmt.finalize();
+
+      db.run(`UPDATE trips SET 
+              distance_km = distance_km + ?, 
+              fuel_liters = fuel_liters + ?,
+              avg_speed = (SELECT AVG(speed) FROM obd_records WHERE trip_id = ? AND speed > 0),
+              max_speed = MAX(COALESCE(max_speed, 0), ?)
+              WHERE id = ?`, 
+              [totalAddedDist, totalAddedFuel, tripId, batchMaxSpeed, tripId], 
+              (err) => {
+                if (err) {
+                  db.run("ROLLBACK");
+                  return res.status(500).json({ error: err.message });
+                }
+                db.run("COMMIT");
+                console.log(`[Batch Sync] Processed ${records.length} offline records for Trip #${tripId}`);
+                res.status(201).json({ success: true, count: records.length, tripId });
+              });
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Endpoint for the dashboard to get latest stats
 app.get('/api/data', (req, res) => {
   const activeId = currentTripId;

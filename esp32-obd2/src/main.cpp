@@ -3,6 +3,7 @@
 #include <HTTPClient.h>
 #include "BluetoothSerial.h"
 #include <ELMduino.h>
+#include <WiFiClientSecure.h>
 
 // --- WiFi Credentials ---
 const char* ssid = "YOUR_WIFI_SSID";
@@ -54,8 +55,19 @@ void setup() {
 void sendDataToServer(float rpm, float speed, float temp, float volt, float fuel) {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    http.begin(serverUrl);
+    
+    // Check if URL is HTTPS
+    if (String(serverUrl).startsWith("https")) {
+      WiFiClientSecure *client = new WiFiClientSecure;
+      client->setInsecure(); // Skip certificate validation
+      http.begin(*client, serverUrl);
+    } else {
+      http.begin(serverUrl);
+    }
+
     http.addHeader("Content-Type", "application/json");
+    // Important: Bypass Ngrok warning for free accounts
+    http.addHeader("ngrok-skip-browser-warning", "true");
 
     String jsonPayload = "{";
     jsonPayload += "\"rpm\":" + String(rpm) + ",";

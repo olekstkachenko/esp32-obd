@@ -7,7 +7,7 @@
 #include <vector>
 
 // --- WiFi Credentials ---
-const char* ssid = "Xiaomi 12T Pro";
+const char* ssid = "Pajero";
 const char* password = "090384wifi";
 
 // --- Server Details ---

@@ -68,6 +68,20 @@
                 </div>
             </section>
 
+            <!-- Live Diagnostic & ESP32 Log Console -->
+            <div class="glass-panel" style="margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 6px; color: #fff;">
+                        <span>🛠️</span> Діагностика & Логи ESP32
+                    </span>
+                    <span id="espStatusBadge" class="trip-badge badge-active" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa;">Очікування логів...</span>
+                </div>
+                
+                <div id="espLogsConsole" style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px; font-family: monospace; font-size: 0.75rem; height: 130px; overflow-y: auto; color: #38bdf8;">
+                    <div style="color: var(--text-secondary);">⏳ Очікування підключення ESP32...</div>
+                </div>
+            </div>
+
             <!-- Live Metrics Grid -->
             <main>
                 <div class="metrics-grid">

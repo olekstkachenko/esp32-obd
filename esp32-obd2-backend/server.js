@@ -31,11 +31,13 @@ db.serialize(() => {
     distance_km REAL DEFAULT 0,
     avg_speed REAL DEFAULT 0,
     max_speed REAL DEFAULT 0,
+    fuel_liters REAL DEFAULT 0,
     status TEXT DEFAULT 'active'
   )`);
 
-  // Migrate existing DB if column doesn't exist
+  // Migrate existing DB if columns don't exist
   db.run(`ALTER TABLE trips ADD COLUMN max_speed REAL DEFAULT 0`, () => {});
+  db.run(`ALTER TABLE trips ADD COLUMN fuel_liters REAL DEFAULT 0`, () => {});
 
   db.run(`CREATE TABLE IF NOT EXISTS obd_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +49,32 @@ db.serialize(() => {
     voltage REAL,
     fuel_rate REAL
   )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS fuel_prices (
+    station TEXT PRIMARY KEY,
+    price REAL,
+    fuel_type TEXT DEFAULT 'A-95',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+
+  db.run(`INSERT OR IGNORE INTO settings (key, value) VALUES ('fuel_price', '82.90')`);
+
+  // Seed initial fuel prices if table is empty
+  const defaultPrices = [
+    ['OKKO', 82.90],
+    ['WOG', 82.90],
+    ['UPG', 78.90],
+    ['KLO', 79.90],
+    ['UKRNAFTA', 78.90]
+  ];
+  defaultPrices.forEach(([st, pr]) => {
+    db.run(`INSERT OR IGNORE INTO fuel_prices (station, price, fuel_type) VALUES (?, ?, 'A-95')`, [st, pr]);
+  });
 
   // Recover active or latest trip on startup
   db.get(`SELECT id, status FROM trips ORDER BY id DESC LIMIT 1`, [], (err, row) => {
@@ -75,7 +103,7 @@ async function ensureActiveTrip() {
             db.run(`UPDATE trips SET status = 'completed', end_time = CURRENT_TIMESTAMP WHERE id = ?`, [currentTripId]);
         }
 
-        db.run(`INSERT INTO trips (status, max_speed) VALUES ('active', 0)`, function(err) {
+        db.run(`INSERT INTO trips (status, max_speed, fuel_liters) VALUES ('active', 0, 0)`, function(err) {
             if (err) return reject(err);
             currentTripId = this.lastID;
             lastUpdateTimestamp = now;
@@ -84,15 +112,26 @@ async function ensureActiveTrip() {
     });
 }
 
-async function updateTripStats(tripId, speedKmh, timeDiffSeconds) {
+async function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
     if (timeDiffSeconds <= 0 || timeDiffSeconds > 60) return;
-    const distanceKm = speedKmh * (timeDiffSeconds / 3600.0);
+    const distanceKm = (speedKmh > 0) ? (speedKmh * (timeDiffSeconds / 3600.0)) : 0;
+    
+    // Calculate fuel used: from fuel_rate (L/h) or estimated fallback from distance
+    let addedFuel = 0;
+    if (fuelRateLh && fuelRateLh > 0) {
+      addedFuel = fuelRateLh * (timeDiffSeconds / 3600.0);
+    } else if (distanceKm > 0) {
+      // Fallback estimate 7.5L/100km if no MAF sensor
+      addedFuel = (distanceKm * 7.5) / 100.0;
+    }
+
     db.run(`UPDATE trips SET 
             distance_km = distance_km + ?, 
+            fuel_liters = fuel_liters + ?,
             avg_speed = (SELECT AVG(speed) FROM obd_records WHERE trip_id = ? AND speed > 0),
             max_speed = MAX(COALESCE(max_speed, 0), ?)
             WHERE id = ?`, 
-            [distanceKm, tripId, speedKmh, tripId]);
+            [distanceKm, addedFuel, tripId, speedKmh, tripId]);
 }
 
 app.post('/api/obd', async (req, res) => {
@@ -108,7 +147,7 @@ app.post('/api/obd', async (req, res) => {
           [tripId, rpm, speed, temp, voltage, fuel_rate], 
           async function(err) {
               if (err) return res.status(500).json({ error: err.message });
-              if (speed > 0) await updateTripStats(tripId, speed, timeDiffSeconds);
+              await updateTripStats(tripId, speed || 0, fuel_rate || 0, timeDiffSeconds);
               res.status(201).json({ success: true, tripId });
       });
   } catch(e) {
@@ -149,7 +188,7 @@ app.get('/api/history', (req, res) => {
 
 // --- Trips Archive Endpoints ---
 
-// 1. Get list of all trips with statistics
+// 1. Get list of all trips with statistics and fuel cost
 app.get('/api/trips', (req, res) => {
   const sql = `
     SELECT 
@@ -159,7 +198,13 @@ app.get('/api/trips', (req, res) => {
       ROUND(t.distance_km, 2) AS distance_km,
       ROUND(COALESCE(t.avg_speed, 0), 1) AS avg_speed,
       ROUND(COALESCE(t.max_speed, (SELECT MAX(speed) FROM obd_records WHERE trip_id = t.id), 0), 1) AS max_speed,
-      ROUND(COALESCE((SELECT AVG(fuel_rate) FROM obd_records WHERE trip_id = t.id AND fuel_rate > 0), 0), 1) AS avg_fuel,
+      ROUND(COALESCE(t.fuel_liters, 0), 2) AS fuel_liters,
+      ROUND(COALESCE((SELECT AVG(fuel_rate) FROM obd_records WHERE trip_id = t.id AND fuel_rate > 0), 0), 1) AS avg_fuel_rate,
+      CASE 
+        WHEN t.distance_km > 0.05 AND t.fuel_liters > 0 THEN ROUND((t.fuel_liters / t.distance_km) * 100, 1)
+        ELSE 0 
+      END AS l_per_100km,
+      ROUND(COALESCE(t.fuel_liters, 0) * (SELECT CAST(COALESCE(value, '82.90') AS REAL) FROM settings WHERE key = 'fuel_price'), 2) AS trip_cost_uah,
       COUNT(o.id) AS records_count,
       ROUND((JULIANDAY(COALESCE(t.end_time, 'now')) - JULIANDAY(t.start_time)) * 86400) AS duration_seconds,
       t.status
@@ -177,7 +222,10 @@ app.get('/api/trips', (req, res) => {
 // 2. Get specific trip details and its complete telemetry points
 app.get('/api/trips/:id', (req, res) => {
   const tripId = req.params.id;
-  db.get(`SELECT * FROM trips WHERE id = ?`, [tripId], (err, trip) => {
+  db.get(`SELECT *, 
+          ROUND(COALESCE(fuel_liters, 0), 2) AS fuel_liters,
+          ROUND(COALESCE(fuel_liters, 0) * (SELECT CAST(COALESCE(value, '82.90') AS REAL) FROM settings WHERE key = 'fuel_price'), 2) AS trip_cost_uah
+          FROM trips WHERE id = ?`, [tripId], (err, trip) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!trip) return res.status(404).json({ error: 'Поїздку не знайдено' });
 
@@ -212,6 +260,132 @@ app.post('/api/trips/finish', (req, res) => {
     });
   } else {
     res.json({ success: true, message: 'Немає активної поїздки' });
+  }
+});
+
+// --- Fuel Prices Scraper & Settings ---
+
+const https = require('https');
+
+async function fetchGasStationPrices() {
+  return new Promise((resolve) => {
+    const url = 'https://index.minfin.com.ua/ua/markets/fuel/tm/';
+    const options = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'uk-UA,uk;q=0.9,en;q=0.8'
+      },
+      timeout: 10000
+    };
+
+    https.get(url, options, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const targetStations = {
+            'окко': 'OKKO',
+            'okko': 'OKKO',
+            'wog': 'WOG',
+            'upg': 'UPG',
+            'klo': 'KLO',
+            'ukrnafta': 'UKRNAFTA',
+            'укрнафта': 'UKRNAFTA'
+          };
+
+          const parsed = {};
+          const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+          let match;
+          while ((match = rowRegex.exec(data)) !== null) {
+            const rowHtml = match[1];
+            const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+            const cells = [];
+            let tdMatch;
+            while ((tdMatch = tdRegex.exec(rowHtml)) !== null) {
+              cells.push(tdMatch[1].replace(/<[^>]+>/g, '').trim());
+            }
+            if (cells.length >= 4) {
+              const stationNameRaw = cells[0].toLowerCase();
+              for (const [key, normalized] of Object.entries(targetStations)) {
+                if (stationNameRaw === key || stationNameRaw.includes(key)) {
+                  const priceStr = cells[3].replace(',', '.').trim();
+                  const price = parseFloat(priceStr);
+                  if (!isNaN(price) && price > 30 && price < 150) {
+                    parsed[normalized] = price;
+                  }
+                }
+              }
+            }
+          }
+
+          // Save to SQLite
+          const entries = Object.entries(parsed);
+          if (entries.length > 0) {
+            entries.forEach(([st, pr]) => {
+              db.run(`INSERT INTO fuel_prices (station, price, fuel_type, updated_at) 
+                      VALUES (?, ?, 'A-95', CURRENT_TIMESTAMP)
+                      ON CONFLICT(station) DO UPDATE SET price = excluded.price, updated_at = CURRENT_TIMESTAMP`, 
+                      [st, pr]);
+            });
+            console.log(`✅ Updated fuel prices for ${entries.length} gas stations:`, parsed);
+          }
+          resolve(parsed);
+        } catch (e) {
+          console.error("Error parsing fuel prices:", e.message);
+          resolve(null);
+        }
+      });
+    }).on('error', (err) => {
+      console.error("Failed to fetch gas station prices:", err.message);
+      resolve(null);
+    });
+  });
+}
+
+// Initial fetch on start and repeat every 4 hours (multiple times a day)
+setTimeout(fetchGasStationPrices, 3000);
+setInterval(fetchGasStationPrices, 4 * 60 * 60 * 1000);
+
+// API to get fuel prices
+app.get('/api/fuel-prices', (req, res) => {
+  db.all(`SELECT station, price, fuel_type, updated_at FROM fuel_prices ORDER BY price DESC`, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows || []);
+  });
+});
+
+// API to force refresh fuel prices
+app.post('/api/fuel-prices/refresh', async (req, res) => {
+  await fetchGasStationPrices();
+  db.all(`SELECT station, price, fuel_type, updated_at FROM fuel_prices ORDER BY price DESC`, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true, prices: rows || [] });
+  });
+});
+
+// API for user settings (e.g. fuel price)
+app.get('/api/settings', (req, res) => {
+  db.all(`SELECT key, value FROM settings`, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const settings = {};
+    (rows || []).forEach(r => { settings[r.key] = r.value; });
+    res.json(settings);
+  });
+});
+
+app.post('/api/settings', (req, res) => {
+  const { fuel_price } = req.body;
+  if (fuel_price) {
+    db.run(`INSERT INTO settings (key, value) VALUES ('fuel_price', ?) 
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value`, 
+            [String(fuel_price)], 
+            (err) => {
+              if (err) return res.status(500).json({ error: err.message });
+              res.json({ success: true, fuel_price });
+            });
+  } else {
+    res.status(400).json({ error: 'No fuel_price provided' });
   }
 });
 

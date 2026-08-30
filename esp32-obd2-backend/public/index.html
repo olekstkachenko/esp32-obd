@@ -21,12 +21,28 @@
         <!-- Navigation Tabs -->
         <nav class="nav-tabs">
             <button class="nav-tab active" id="tabLiveBtn" onclick="switchTab('live')">
-                <span>📊</span> Live Дашборд
+                <span>📊</span> Live
             </button>
             <button class="nav-tab" id="tabTripsBtn" onclick="switchTab('trips')">
-                <span>📜</span> Архів поїздок
+                <span>📜</span> Архів
+            </button>
+            <button class="nav-tab" id="tabGasBtn" onclick="switchTab('gas')">
+                <span>⛽</span> Ціни АЗС
             </button>
         </nav>
+
+        <!-- Fuel Price Setting Widget -->
+        <div class="fuel-price-bar">
+            <div class="fuel-price-info">
+                <span>⛽</span>
+                <span>Ціна бензину <b>А-95</b>:</span>
+            </div>
+            <div class="fuel-price-input-wrapper">
+                <input type="number" step="0.1" id="globalFuelPriceInput" class="fuel-price-input" value="82.90" onchange="saveFuelPrice()">
+                <span style="font-weight:600; color:var(--text-secondary);">грн/л</span>
+                <button class="btn-sm btn-primary" onclick="saveFuelPrice()" style="padding:6px 10px;">💾</button>
+            </div>
+        </div>
 
         <!-- ================= LIVE VIEW ================= -->
         <div id="viewLive" style="display: flex; flex-direction: column; gap: 24px;">
@@ -99,6 +115,21 @@
             </div>
         </div>
 
+        <!-- ================= GAS STATIONS VIEW ================= -->
+        <div id="viewGas" style="display: none; flex-direction: column; gap: 20px;">
+            <div class="trips-header-bar">
+                <div>
+                    <div class="trip-header" style="font-size: 1.1rem; color: #fff;">Ціни на бензин А-95 (звичайний)</div>
+                    <div id="fuelLastUpdated" style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">Оновлюється кілька разів на день</div>
+                </div>
+                <button class="btn-sm btn-primary" id="btnRefreshGas" onclick="refreshGasStations()">🔄 Оновити зараз</button>
+            </div>
+
+            <div id="gasStationsList" class="gas-stations-grid">
+                <!-- Gas station cards inserted dynamically -->
+            </div>
+        </div>
+
         <!-- ================= MODAL: TRIP DETAILS ================= -->
         <div id="tripModal" class="modal-overlay" style="display: none;">
             <div class="modal-content glass-panel">
@@ -110,7 +141,7 @@
                     <button class="close-btn" onclick="closeTripModal()">✕</button>
                 </div>
 
-                <div class="trip-card-grid" style="background: rgba(15, 23, 42, 0.6);">
+                <div class="trip-card-grid" style="background: rgba(15, 23, 42, 0.6); grid-template-columns: repeat(3, 1fr);">
                     <div class="trip-stat-item">
                         <span class="trip-stat-label">Дистанція</span>
                         <span id="modalTripDist" class="trip-stat-val">-- km</span>
@@ -126,6 +157,14 @@
                     <div class="trip-stat-item">
                         <span class="trip-stat-label">Макс. швидкість</span>
                         <span id="modalTripMax" class="trip-stat-val">-- km/h</span>
+                    </div>
+                    <div class="trip-stat-item">
+                        <span class="trip-stat-label">Витрата пального</span>
+                        <span id="modalTripFuel" class="trip-stat-val">-- л</span>
+                    </div>
+                    <div class="trip-stat-item">
+                        <span class="trip-stat-label">Вартість</span>
+                        <span id="modalTripCost" class="trip-stat-val cost-tag">-- ₴</span>
                     </div>
                 </div>
 
@@ -186,13 +225,43 @@
             currentTab = tab;
             document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
             document.getElementById('tabTripsBtn').classList.toggle('active', tab === 'trips');
+            document.getElementById('tabGasBtn').classList.toggle('active', tab === 'gas');
             
             document.getElementById('viewLive').style.display = tab === 'live' ? 'flex' : 'none';
             document.getElementById('viewTrips').style.display = tab === 'trips' ? 'flex' : 'none';
+            document.getElementById('viewGas').style.display = tab === 'gas' ? 'flex' : 'none';
 
             if (tab === 'trips') {
                 loadTrips();
+            } else if (tab === 'gas') {
+                loadGasStations();
             }
+        }
+
+        // Settings (Fuel Price)
+        async function loadSettings() {
+            try {
+                const res = await fetch('/api/settings');
+                const data = await res.json();
+                if (data.fuel_price) {
+                    document.getElementById('globalFuelPriceInput').value = Number(data.fuel_price).toFixed(2);
+                }
+            } catch (err) {}
+        }
+
+        async function saveFuelPrice(val) {
+            const inputVal = val !== undefined ? val : parseFloat(document.getElementById('globalFuelPriceInput').value);
+            if (isNaN(inputVal) || inputVal <= 0) return;
+
+            document.getElementById('globalFuelPriceInput').value = Number(inputVal).toFixed(2);
+            try {
+                await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fuel_price: inputVal })
+                });
+                if (currentTab === 'trips') loadTrips();
+            } catch (err) {}
         }
 
         async function fetchLatest() {
@@ -281,7 +350,7 @@
                                 </span>
                             </div>
 
-                            <div class="trip-card-grid">
+                            <div class="trip-card-grid" style="grid-template-columns: repeat(3, 1fr);">
                                 <div class="trip-stat-item">
                                     <span class="trip-stat-label">Дистанція</span>
                                     <span class="trip-stat-val">${t.distance_km} <span style="font-size:0.75rem;font-weight:400;">km</span></span>
@@ -297,6 +366,14 @@
                                 <div class="trip-stat-item">
                                     <span class="trip-stat-label">Макс. швидкість</span>
                                     <span class="trip-stat-val">${t.max_speed} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
+                                </div>
+                                <div class="trip-stat-item">
+                                    <span class="trip-stat-label">Витрата</span>
+                                    <span class="trip-stat-val">${t.fuel_liters || 0} л <span style="font-size:0.72rem;color:var(--text-secondary);">(${t.l_per_100km || 0}/100)</span></span>
+                                </div>
+                                <div class="trip-stat-item">
+                                    <span class="trip-stat-label">Вартість</span>
+                                    <span class="trip-stat-val cost-tag">${t.trip_cost_uah || 0} ₴</span>
                                 </div>
                             </div>
 
@@ -328,6 +405,8 @@
                 );
                 document.getElementById('modalTripAvg').innerText = `${Math.round(trip.avg_speed || 0)} km/h`;
                 document.getElementById('modalTripMax').innerText = `${Math.round(trip.max_speed || 0)} km/h`;
+                document.getElementById('modalTripFuel').innerText = `${trip.fuel_liters || 0} л`;
+                document.getElementById('modalTripCost').innerText = `${trip.trip_cost_uah || 0} ₴`;
 
                 document.getElementById('tripModal').style.display = 'flex';
 
@@ -381,6 +460,102 @@
             }
         }
 
+        // Gas Stations Logic
+        const stationBrandClasses = {
+            'OKKO': 'station-brand-okko',
+            'WOG': 'station-brand-wog',
+            'UPG': 'station-brand-upg',
+            'KLO': 'station-brand-klo',
+            'UKRNAFTA': 'station-brand-ukrnafta'
+        };
+
+        const stationIcons = {
+            'OKKO': '🟢',
+            'WOG': '🟢',
+            'UPG': '🔵',
+            'KLO': '🟡',
+            'UKRNAFTA': '🔷'
+        };
+
+        async function loadGasStations() {
+            const container = document.getElementById('gasStationsList');
+            container.innerHTML = '<div class="empty-state">⏳ Отримання цін з АЗС...</div>';
+
+            try {
+                const res = await fetch('/api/fuel-prices');
+                const stations = await res.json();
+
+                if (!stations || stations.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Немає даних про ціни</div>';
+                    return;
+                }
+
+                // Update last updated info
+                const latestTime = stations[0]?.updated_at;
+                if (latestTime) {
+                    document.getElementById('fuelLastUpdated').innerText = `Останнє оновлення: ${formatDate(latestTime)}`;
+                }
+
+                const currentPriceVal = parseFloat(document.getElementById('globalFuelPriceInput').value);
+
+                container.innerHTML = stations.map(s => {
+                    const brandClass = stationBrandClasses[s.station] || '';
+                    const icon = stationIcons[s.station] || '⛽';
+                    const isSelected = Math.abs(currentPriceVal - s.price) < 0.05;
+
+                    return `
+                        <div class="glass-panel station-card ${brandClass}">
+                            <div class="station-brand-header">
+                                <div class="station-logo-badge">
+                                    <span>${icon}</span>
+                                    <span>${s.station}</span>
+                                </div>
+                                <span class="fuel-badge-tag">А-95</span>
+                            </div>
+
+                            <div class="station-price-box">
+                                <span class="station-price-val">${Number(s.price).toFixed(2)}</span>
+                                <span class="station-price-currency">грн / л</span>
+                            </div>
+
+                            <div class="station-update-time">
+                                🕒 ${formatDate(s.updated_at)}
+                            </div>
+
+                            <button class="btn-apply-price ${isSelected ? 'btn-applied' : ''}" 
+                                onclick="applyStationPrice(${s.price}, '${s.station}')">
+                                ${isSelected ? '✓ Вибрано' : '🎯 Застосувати'}
+                            </button>
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                container.innerHTML = '<div class="empty-state" style="color:#ef4444;">Помилка завантаження цін АЗС</div>';
+            }
+        }
+
+        async function applyStationPrice(price, stationName) {
+            await saveFuelPrice(price);
+            loadGasStations();
+        }
+
+        async function refreshGasStations() {
+            const btn = document.getElementById('btnRefreshGas');
+            btn.disabled = true;
+            btn.innerText = '⏳ Оновлюємо...';
+
+            try {
+                await fetch('/api/fuel-prices/refresh', { method: 'POST' });
+                await loadGasStations();
+            } catch (err) {
+                alert('Помилка оновлення');
+            } finally {
+                btn.disabled = false;
+                btn.innerText = '🔄 Оновити зараз';
+            }
+        }
+
+        loadSettings();
         fetchLatest();
         fetchHistory();
         liveTimer1 = setInterval(fetchLatest, 2000);

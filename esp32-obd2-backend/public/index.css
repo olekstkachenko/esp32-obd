@@ -424,3 +424,172 @@ h1 {
         gap: 12px;
     }
 }
+
+/* Fuel Price Settings Bar */
+.fuel-price-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 18px;
+    background: rgba(15, 23, 42, 0.45);
+    border: 1px solid var(--glass-border);
+    border-radius: 14px;
+    gap: 12px;
+}
+
+.fuel-price-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.fuel-price-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.fuel-price-input {
+    width: 80px;
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: right;
+    outline: none;
+    font-family: inherit;
+}
+
+.fuel-price-input:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+
+/* Gas Stations Grid & Cards */
+.gas-stations-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+}
+
+.station-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px;
+    border-radius: 16px;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.station-card:hover {
+    transform: translateY(-3px);
+}
+
+.station-brand-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.station-logo-badge {
+    font-size: 1.1rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.station-brand-okko { border-top: 4px solid #10b981; }
+.station-brand-okko .station-logo-badge { color: #34d399; }
+
+.station-brand-wog { border-top: 4px solid #22c55e; }
+.station-brand-wog .station-logo-badge { color: #4ade80; }
+
+.station-brand-upg { border-top: 4px solid #3b82f6; }
+.station-brand-upg .station-logo-badge { color: #60a5fa; }
+
+.station-brand-klo { border-top: 4px solid #eab308; }
+.station-brand-klo .station-logo-badge { color: #facc15; }
+
+.station-brand-ukrnafta { border-top: 4px solid #06b6d4; }
+.station-brand-ukrnafta .station-logo-badge { color: #22d3ee; }
+
+.fuel-badge-tag {
+    font-size: 0.75rem;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.station-price-box {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin: 4px 0;
+}
+
+.station-price-val {
+    font-size: 2.2rem;
+    font-weight: 800;
+    color: #ffffff;
+    line-height: 1;
+}
+
+.station-price-currency {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.station-update-time {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.btn-apply-price {
+    width: 100%;
+    padding: 9px 12px;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    border-radius: 8px;
+    color: #93c5fd;
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.btn-apply-price:hover {
+    background: rgba(59, 130, 246, 0.3);
+    color: #fff;
+}
+
+.btn-applied {
+    background: rgba(16, 185, 129, 0.2) !important;
+    border-color: rgba(16, 185, 129, 0.5) !important;
+    color: #34d399 !important;
+}
+
+/* Highlight cost metric */
+.highlight-green {
+    border-top: 3px solid #10b981;
+}
+
+.cost-tag {
+    color: #34d399;
+    font-weight: 700;
+}

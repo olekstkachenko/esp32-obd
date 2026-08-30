@@ -267,19 +267,79 @@ app.post('/api/trips/finish', (req, res) => {
 
 const https = require('https');
 
-async function fetchGasStationPrices() {
+// 1. Direct WOG API fetcher
+function fetchWogDirect() {
+  return new Promise((resolve) => {
+    https.get('https://api.wog.ua/fuel_stations', {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      timeout: 8000
+    }, (res) => {
+      let raw = '';
+      res.on('data', c => { raw += c; });
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(raw);
+          const filters = json.data?.fuel_filters || [];
+          // Look for regular 95 (not Mustang)
+          const f95 = filters.find(f => (f.name === '95' || f.name === 'А-95') && !String(f.brand).includes('Mustang'))
+                   || filters.find(f => f.name === '95');
+          if (f95 && f95.price) {
+            const price = f95.price / 100.0;
+            console.log(`[WOG Direct API] Found A-95 price: ${price} грн`);
+            return resolve(price);
+          }
+        } catch (e) {}
+        resolve(null);
+      });
+    }).on('error', () => resolve(null));
+  });
+}
+
+// 2. Direct UPG web page parser
+function fetchUpgDirect() {
+  return new Promise((resolve) => {
+    https.get('https://upg.ua/cini-na-palne/', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html'
+      },
+      timeout: 8000
+    }, (res) => {
+      let html = '';
+      res.on('data', c => { html += c; });
+      res.on('end', () => {
+        try {
+          const match = /var\s+obj\s*=\s*({[\s\S]*?});/.exec(html);
+          if (match) {
+            const json = JSON.parse(match[1]);
+            const items = json.data || [];
+            // Find A-95 entries
+            const a95List = items.filter(it => it.Title === 'A-95' || it.FuelTypeId === 2);
+            if (a95List.length > 0) {
+              const sum = a95List.reduce((acc, curr) => acc + parseFloat(curr.AveragePrice || 0), 0);
+              const avg = Math.round((sum / a95List.length) * 100) / 100;
+              console.log(`[UPG Direct] Found A-95 price: ${avg} грн`);
+              return resolve(avg);
+            }
+          }
+        } catch (e) {}
+        resolve(null);
+      });
+    }).on('error', () => resolve(null));
+  });
+}
+
+// 3. Minfin aggregator (for OKKO, KLO, UKRNAFTA and fallback)
+function fetchMinfinPrices() {
   return new Promise((resolve) => {
     const url = 'https://index.minfin.com.ua/ua/markets/fuel/tm/';
-    const options = {
+    https.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'uk-UA,uk;q=0.9,en;q=0.8'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html'
       },
       timeout: 10000
-    };
-
-    https.get(url, options, (res) => {
+    }, (res) => {
       let data = '';
       res.on('data', chunk => { data += chunk; });
       res.on('end', () => {
@@ -293,7 +353,6 @@ async function fetchGasStationPrices() {
             'ukrnafta': 'UKRNAFTA',
             'укрнафта': 'UKRNAFTA'
           };
-
           const parsed = {};
           const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
           let match;
@@ -318,29 +377,44 @@ async function fetchGasStationPrices() {
               }
             }
           }
-
-          // Save to SQLite
-          const entries = Object.entries(parsed);
-          if (entries.length > 0) {
-            entries.forEach(([st, pr]) => {
-              db.run(`INSERT INTO fuel_prices (station, price, fuel_type, updated_at) 
-                      VALUES (?, ?, 'A-95', CURRENT_TIMESTAMP)
-                      ON CONFLICT(station) DO UPDATE SET price = excluded.price, updated_at = CURRENT_TIMESTAMP`, 
-                      [st, pr]);
-            });
-            console.log(`✅ Updated fuel prices for ${entries.length} gas stations:`, parsed);
-          }
           resolve(parsed);
         } catch (e) {
-          console.error("Error parsing fuel prices:", e.message);
-          resolve(null);
+          resolve({});
         }
       });
-    }).on('error', (err) => {
-      console.error("Failed to fetch gas station prices:", err.message);
-      resolve(null);
-    });
+    }).on('error', () => resolve({}));
   });
+}
+
+// Master updater combining all sources
+async function fetchGasStationPrices() {
+  try {
+    console.log("🔄 Fetching fuel prices from all sources...");
+    const [wogPrice, upgPrice, minfinData] = await Promise.all([
+      fetchWogDirect(),
+      fetchUpgDirect(),
+      fetchMinfinPrices()
+    ]);
+
+    const finalPrices = { ...minfinData };
+    if (wogPrice) finalPrices['WOG'] = wogPrice;
+    if (upgPrice) finalPrices['UPG'] = upgPrice;
+
+    const entries = Object.entries(finalPrices);
+    if (entries.length > 0) {
+      entries.forEach(([st, pr]) => {
+        db.run(`INSERT INTO fuel_prices (station, price, fuel_type, updated_at) 
+                VALUES (?, ?, 'A-95', CURRENT_TIMESTAMP)
+                ON CONFLICT(station) DO UPDATE SET price = excluded.price, updated_at = CURRENT_TIMESTAMP`, 
+                [st, pr]);
+      });
+      console.log(`✅ Updated fuel prices for ${entries.length} stations:`, finalPrices);
+    }
+    return finalPrices;
+  } catch (err) {
+    console.error("Failed to update fuel prices:", err.message);
+    return null;
+  }
 }
 
 // Initial fetch on start and repeat every 4 hours (multiple times a day)

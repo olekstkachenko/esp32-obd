@@ -54,8 +54,8 @@
 2. Відкрийте папку `esp32-obd2` у VS Code.
 3. Перевірте та відредагуйте `src/main.cpp`:
    ```cpp
-   const char* ssid = "Xiaomi 12T Pro";    // Назва точки доступу вашого смартфона
-   const char* password = "ваш_пароль";      // Пароль точки доступу
+   const char* ssid = "Pajero";           // Назва точки доступу (Pajero)
+   const char* password = "090384wifi";   // Пароль точки доступу
    const char* serverUrlBase = "https://ваш-ngrok-домен.ngrok-free.dev/api/obd";
    ```
 4. Підключіть ESP32 через USB-кабель до ПК.

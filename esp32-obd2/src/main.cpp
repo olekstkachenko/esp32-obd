@@ -101,30 +101,93 @@ void flushBufferToServer() {
   http.end();
 }
 
+void sendLog(String message, String level = "info", String bt_status = "") {
+  DEBUG_PORT.println("[" + level + "] " + message);
+
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String baseUrl = String(serverUrlBase);
+    int idx = baseUrl.indexOf("/api/obd");
+    String url = (idx >= 0 ? baseUrl.substring(0, idx) : baseUrl) + "/api/device/log";
+
+    if (url.startsWith("https")) {
+      WiFiClientSecure *client = new WiFiClientSecure;
+      client->setInsecure();
+      http.begin(*client, url);
+    } else {
+      http.begin(url);
+    }
+
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("ngrok-skip-browser-warning", "true");
+
+    String json = "{";
+    json += "\"message\":\"" + message + "\",";
+    json += "\"level\":\"" + level + "\"";
+    if (bt_status.length() > 0) {
+      json += ",\"bt_status\":\"" + bt_status + "\"";
+    }
+    json += "}";
+
+    http.POST(json);
+    http.end();
+  }
+}
+
 bool elmConnected = false;
 bool elmInitialized = false;
 
-// Optional MAC Address configuration (if needed in future)
-// uint8_t elmAddress[6] = {0x00, 0x1D, 0xA5, 0x68, 0x98, 0x8B};
+const char* targetNames[] = {"OBDII", "OBD2", "ELM327", "vLinker", "Viecar", "OBD-II"};
+const char* pins[] = {"1234", "0000"};
 
 bool connectToELM327() {
-  DEBUG_PORT.println("📡 Connecting to Bluetooth ELM327 ('OBDII')...");
+  sendLog("📡 Пошук та підключення до Bluetooth OBD2...", "info", "connecting");
 
-  // Try PIN 1234 first
-  SerialBT.setPin("1234");
-  if (SerialBT.connect("OBDII")) {
-    DEBUG_PORT.println("✅ Bluetooth paired & connected with PIN '1234'!");
-    return true;
+  for (const char* name : targetNames) {
+    for (const char* p : pins) {
+      DEBUG_PORT.printf("Attempting connection to '%s' with PIN '%s'...\n", name, p);
+      SerialBT.setPin(p);
+      if (SerialBT.connect(name)) {
+        sendLog("✅ З’єднано з Bluetooth-сканером '" + String(name) + "' (PIN " + String(p) + ")!", "success", "connected");
+        return true;
+      }
+    }
   }
 
-  // Fallback to PIN 0000
-  SerialBT.setPin("0000");
-  if (SerialBT.connect("OBDII")) {
-    DEBUG_PORT.println("✅ Bluetooth paired & connected with PIN '0000'!");
-    return true;
+  sendLog("⚠️ Не вдалося підключитися за стандартними іменами (OBDII, OBD2, ELM327). Запускаємо сканування Bluetooth-ефіру...", "warn", "scanning");
+
+  // Perform Bluetooth Discovery Scan
+  BTScanResults *pResults = SerialBT.getScanResults();
+  if (SerialBT.discover(5000)) { // Scan for 5 seconds
+    pResults = SerialBT.getScanResults();
+    int count = pResults ? pResults->getCount() : 0;
+    sendLog("🔍 Знайдено " + String(count) + " Bluetooth пристроїв поблизу:", "info", "scanning");
+
+    for (int i = 0; i < count; i++) {
+      BTAdvertisedDevice *dev = pResults->getDevice(i);
+      String devName = String(dev->getName().c_str());
+      String devAddr = String(dev->getAddress().toString().c_str());
+      sendLog("📱 Пристрій #" + String(i+1) + ": " + (devName.length() > 0 ? devName : "Приховане ім'я") + " [" + devAddr + "]", "info", "scanning");
+
+      String lowerName = devName;
+      lowerName.toLowerCase();
+      if (lowerName.indexOf("obd") >= 0 || lowerName.indexOf("elm") >= 0 || lowerName.indexOf("linker") >= 0 || lowerName.indexOf("car") >= 0) {
+        sendLog("🎯 Виявлено схожий OBD пристрій: '" + devName + "'. Пробуємо підключення за MAC " + devAddr + "...", "info", "connecting");
+        
+        for (const char* p : pins) {
+          SerialBT.setPin(p);
+          if (SerialBT.connect(dev->getAddress())) {
+            sendLog("🎉 УСПІХ! Підключено до '" + devName + "' [" + devAddr + "]!", "success", "connected");
+            return true;
+          }
+        }
+      }
+    }
+  } else {
+    sendLog("❌ Не знайдено жодного Bluetooth-пристрою поблизу.", "error", "disconnected");
   }
 
-  DEBUG_PORT.println("❌ Could not connect to 'OBDII'. Will retry in 3 seconds...");
+  sendLog("❌ Повторна спроба через 5 секунд...", "warn", "disconnected");
   return false;
 }
 
@@ -134,7 +197,7 @@ void ensureELMConnected() {
     elmInitialized = false;
     
     static unsigned long lastELMRetry = 0;
-    if (millis() - lastELMRetry > 3000) { // Retry every 3 seconds
+    if (millis() - lastELMRetry > 5000) { // Retry every 5 seconds
       lastELMRetry = millis();
       if (connectToELM327()) {
         elmConnected = true;
@@ -144,12 +207,12 @@ void ensureELMConnected() {
   }
 
   if (elmConnected && !elmInitialized) {
-    DEBUG_PORT.println("⚙️ Initializing ELM327 protocol...");
+    sendLog("⚙️ Ініціалізація протоколу ELM327...", "info", "connecting");
     if (myELM327.begin(ELM_PORT, true, 2000)) {
-      DEBUG_PORT.println("✅ ELM327 initialized successfully!");
+      sendLog("🚀 ELM327 ініціалізовано! Готовий до збору телеметрії.", "success", "connected");
       elmInitialized = true;
     } else {
-      DEBUG_PORT.println("⚠️ ELM327 begin failed, retrying protocol init...");
+      sendLog("⚠️ Помилка ELM327 begin. Повтор ініціалізації...", "warn", "connecting");
     }
   }
 }

@@ -4,6 +4,39 @@ const db = require('../db');
 const tripService = require('../services/tripService');
 const fuelScraper = require('../services/fuelScraper');
 
+// Device Diagnostics In-Memory Buffer
+let deviceLogs = [];
+let latestDeviceStatus = {
+  wifi: 'unknown',
+  bt: 'disconnected',
+  last_seen: null
+};
+
+// Device Log Endpoint
+router.post('/device/log', (req, res) => {
+  const { message, level, bt_status, wifi_status } = req.body;
+  const timestamp = new Date().toLocaleTimeString('uk-UA');
+  
+  if (message) {
+    const entry = { timestamp, level: level || 'info', message };
+    deviceLogs.push(entry);
+    if (deviceLogs.length > 100) deviceLogs.shift();
+  }
+
+  if (bt_status) latestDeviceStatus.bt = bt_status;
+  if (wifi_status) latestDeviceStatus.wifi = wifi_status;
+  latestDeviceStatus.last_seen = new Date().toISOString();
+
+  res.json({ success: true });
+});
+
+router.get('/device/status', (req, res) => {
+  res.json({
+    status: latestDeviceStatus,
+    logs: deviceLogs
+  });
+});
+
 // 1. Post single OBD record from ESP32
 router.post('/obd', async (req, res) => {
   const { rpm, speed, temp, voltage, fuel_rate } = req.body;

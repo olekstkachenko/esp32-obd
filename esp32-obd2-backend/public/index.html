@@ -555,11 +555,53 @@
             }
         }
 
+        async function fetchDeviceStatus() {
+            try {
+                const res = await fetch('/api/device/status');
+                const data = await res.json();
+                const logsEl = document.getElementById('espLogsConsole');
+                const badgeEl = document.getElementById('espStatusBadge');
+
+                if (data.status && data.status.bt && badgeEl) {
+                    const bt = data.status.bt;
+                    if (bt === 'connected') {
+                        badgeEl.className = 'trip-badge badge-active';
+                        badgeEl.style.background = 'rgba(34, 197, 94, 0.2)';
+                        badgeEl.style.color = '#4ade80';
+                        badgeEl.innerText = '🟢 Bluetooth OBD2 З’єднано';
+                    } else if (bt === 'connecting' || bt === 'scanning') {
+                        badgeEl.className = 'trip-badge badge-active';
+                        badgeEl.style.background = 'rgba(234, 179, 8, 0.2)';
+                        badgeEl.style.color = '#facc15';
+                        badgeEl.innerText = '🟡 Пошук / Підключення Bluetooth...';
+                    } else {
+                        badgeEl.className = 'trip-badge badge-completed';
+                        badgeEl.style.background = 'rgba(239, 68, 68, 0.2)';
+                        badgeEl.style.color = '#f87171';
+                        badgeEl.innerText = '🔴 Bluetooth Не підключено';
+                    }
+                }
+
+                if (data.logs && data.logs.length > 0 && logsEl) {
+                    logsEl.innerHTML = data.logs.map(l => {
+                        let color = '#38bdf8';
+                        if (l.level === 'warn') color = '#facc15';
+                        if (l.level === 'error') color = '#f87171';
+                        if (l.level === 'success') color = '#4ade80';
+                        return `<div style="color: ${color}; margin-bottom: 2px;">[${l.timestamp}] ${l.message}</div>`;
+                    }).join('');
+                    logsEl.scrollTop = logsEl.scrollHeight;
+                }
+            } catch(err) {}
+        }
+
         loadSettings();
         fetchLatest();
         fetchHistory();
+        fetchDeviceStatus();
         liveTimer1 = setInterval(fetchLatest, 2000);
         liveTimer2 = setInterval(fetchHistory, 5000);
+        setInterval(fetchDeviceStatus, 2000);
     </script>
 </body>
 </html>

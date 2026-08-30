@@ -101,24 +101,65 @@ void flushBufferToServer() {
   http.end();
 }
 
+bool elmConnected = false;
+bool elmInitialized = false;
+
+// Optional MAC Address configuration (if needed in future)
+// uint8_t elmAddress[6] = {0x00, 0x1D, 0xA5, 0x68, 0x98, 0x8B};
+
+bool connectToELM327() {
+  DEBUG_PORT.println("📡 Connecting to Bluetooth ELM327 ('OBDII')...");
+
+  // Try PIN 1234 first
+  SerialBT.setPin("1234");
+  if (SerialBT.connect("OBDII")) {
+    DEBUG_PORT.println("✅ Bluetooth paired & connected with PIN '1234'!");
+    return true;
+  }
+
+  // Fallback to PIN 0000
+  SerialBT.setPin("0000");
+  if (SerialBT.connect("OBDII")) {
+    DEBUG_PORT.println("✅ Bluetooth paired & connected with PIN '0000'!");
+    return true;
+  }
+
+  DEBUG_PORT.println("❌ Could not connect to 'OBDII'. Will retry in 3 seconds...");
+  return false;
+}
+
+void ensureELMConnected() {
+  if (!SerialBT.connected()) {
+    elmConnected = false;
+    elmInitialized = false;
+    
+    static unsigned long lastELMRetry = 0;
+    if (millis() - lastELMRetry > 3000) { // Retry every 3 seconds
+      lastELMRetry = millis();
+      if (connectToELM327()) {
+        elmConnected = true;
+      }
+    }
+    return;
+  }
+
+  if (elmConnected && !elmInitialized) {
+    DEBUG_PORT.println("⚙️ Initializing ELM327 protocol...");
+    if (myELM327.begin(ELM_PORT, true, 2000)) {
+      DEBUG_PORT.println("✅ ELM327 initialized successfully!");
+      elmInitialized = true;
+    } else {
+      DEBUG_PORT.println("⚠️ ELM327 begin failed, retrying protocol init...");
+    }
+  }
+}
+
 void setup() {
   DEBUG_PORT.begin(115200);
   startWiFi();
 
-  SerialBT.setPin(pin);
-  ELM_PORT.begin("ESP32-OBD2", true); 
-
-  DEBUG_PORT.println("Connecting to ELM327...");
-  if (!ELM_PORT.connect("OBDII")) {
-    DEBUG_PORT.println("Couldn't connect to OBD scanner");
-    while (1) delay(100);
-  }
-
-  if (!myELM327.begin(ELM_PORT, true, 2000)) {
-    DEBUG_PORT.println("Couldn't initialize ELM327.");
-    while (1) delay(100);
-  }
-  DEBUG_PORT.println("ELM327 initialized.");
+  ELM_PORT.begin("ESP32-OBD2", true); // Enable Bluetooth Master mode
+  DEBUG_PORT.println("Bluetooth Master mode started. Waiting for ELM327 connection...");
 }
 
 void loop() {
@@ -129,35 +170,40 @@ void loop() {
     WiFi.begin(ssid, password);
   }
 
-  if (millis() - lastUpdate > updateInterval) {
-    float dt = (millis() - lastUpdate) / 1000.0;
-    lastUpdate = millis();
+  // Maintain & auto-reconnect Bluetooth connection to ELM327 OBDII
+  ensureELMConnected();
 
-    float rpm = myELM327.rpm();
-    float speed = myELM327.kph();
-    float temp = myELM327.engineCoolantTemp();
-    float volt = myELM327.batteryVoltage();
-    float maf = myELM327.mafRate(); // g/s
+  if (elmInitialized && SerialBT.connected()) {
+    if (millis() - lastUpdate > updateInterval) {
+      float dt = (millis() - lastUpdate) / 1000.0;
+      lastUpdate = millis();
 
-    float fuel_rate = (maf > 0 && myELM327.nb_rx_state == ELM_SUCCESS) ? (maf * 3600.0 / 14.7 / 717.0) : 0;
+      float rpm = myELM327.rpm();
+      float speed = myELM327.kph();
+      float temp = myELM327.engineCoolantTemp();
+      float volt = myELM327.batteryVoltage();
+      float maf = myELM327.mafRate(); // g/s
 
-    if (myELM327.nb_rx_state == ELM_SUCCESS) {
-      DEBUG_PORT.printf("RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
-                        rpm, speed, temp, volt, fuel_rate, (int)telemetryBuffer.size());
-      
-      // Store in buffer
-      if (telemetryBuffer.size() >= MAX_BUFFER_SIZE) {
-        telemetryBuffer.erase(telemetryBuffer.begin()); // FIFO drop oldest if buffer is full
+      float fuel_rate = (maf > 0 && myELM327.nb_rx_state == ELM_SUCCESS) ? (maf * 3600.0 / 14.7 / 717.0) : 0;
+
+      if (myELM327.nb_rx_state == ELM_SUCCESS) {
+        DEBUG_PORT.printf("RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
+                          rpm, speed, temp, volt, fuel_rate, (int)telemetryBuffer.size());
+        
+        // Store in buffer
+        if (telemetryBuffer.size() >= MAX_BUFFER_SIZE) {
+          telemetryBuffer.erase(telemetryBuffer.begin()); // FIFO drop oldest if buffer is full
+        }
+        telemetryBuffer.push_back({rpm, speed, temp, volt, fuel_rate, dt});
+
+        // Try flushing buffer if WiFi is connected
+        if (WiFi.status() == WL_CONNECTED) {
+          flushBufferToServer();
+        }
+      } else if (myELM327.nb_rx_state != ELM_GETTING_MSG) {
+        DEBUG_PORT.print("ELM327 ERROR: ");
+        DEBUG_PORT.println(myELM327.nb_rx_state);
       }
-      telemetryBuffer.push_back({rpm, speed, temp, volt, fuel_rate, dt});
-
-      // Try flushing buffer if WiFi is connected
-      if (WiFi.status() == WL_CONNECTED) {
-        flushBufferToServer();
-      }
-    } else if (myELM327.nb_rx_state != ELM_GETTING_MSG) {
-      DEBUG_PORT.print("ELM327 ERROR: ");
-      DEBUG_PORT.println(myELM327.nb_rx_state);
     }
   }
 }

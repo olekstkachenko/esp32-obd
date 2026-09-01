@@ -60,17 +60,6 @@ void sendLog(String message, String level = "info", String bt_status = "") {
     int idx = baseUrl.indexOf("/api/obd");
     String url = (idx >= 0 ? baseUrl.substring(0, idx) : baseUrl) + "/api/device/log";
 
-    if (url.startsWith("https")) {
-      WiFiClientSecure *client = new WiFiClientSecure;
-      client->setInsecure();
-      http.begin(*client, url);
-    } else {
-      http.begin(url);
-    }
-
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("ngrok-skip-browser-warning", "true");
-
     String cleanMsg = message;
     cleanMsg.replace("\"", "'");
 
@@ -82,8 +71,24 @@ void sendLog(String message, String level = "info", String bt_status = "") {
     }
     json += "}";
 
-    http.POST(json);
-    http.end();
+    if (url.startsWith("https")) {
+      WiFiClientSecure client;
+      client.setInsecure();
+      http.begin(client, url);
+      http.addHeader("Content-Type", "application/json");
+      http.addHeader("User-Agent", "ESP32");
+      http.addHeader("ngrok-skip-browser-warning", "true");
+      int code = http.POST(json);
+      DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
+      http.end();
+    } else {
+      http.begin(url);
+      http.addHeader("Content-Type", "application/json");
+      http.addHeader("ngrok-skip-browser-warning", "true");
+      int code = http.POST(json);
+      DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
+      http.end();
+    }
   }
 }
 
@@ -94,17 +99,6 @@ void flushBufferToServer() {
   HTTPClient http;
   String url = String(serverUrlBase);
   if (telemetryBuffer.size() > 1) url += "/batch";
-
-  if (url.startsWith("https")) {
-    WiFiClientSecure *client = new WiFiClientSecure;
-    client->setInsecure();
-    http.begin(*client, url);
-  } else {
-    http.begin(url);
-  }
-
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("ngrok-skip-browser-warning", "true");
 
   String jsonPayload;
   if (telemetryBuffer.size() == 1) {
@@ -131,14 +125,34 @@ void flushBufferToServer() {
     jsonPayload += "]}";
   }
 
-  int httpCode = http.POST(jsonPayload);
-  if (httpCode == 200 || httpCode == 201) {
-    DEBUG_PORT.printf("✅ Flushed %d offline records to server (HTTP %d)\n", (int)telemetryBuffer.size(), httpCode);
-    telemetryBuffer.clear();
+  if (url.startsWith("https")) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    http.begin(client, url);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("User-Agent", "ESP32");
+    http.addHeader("ngrok-skip-browser-warning", "true");
+    int httpCode = http.POST(jsonPayload);
+    if (httpCode == 200 || httpCode == 201) {
+      DEBUG_PORT.printf("✅ Flushed %d offline records to server (HTTP %d)\n", (int)telemetryBuffer.size(), httpCode);
+      telemetryBuffer.clear();
+    } else {
+      DEBUG_PORT.printf("⚠️ Sync failed (HTTP %d). Buffer size: %d records\n", httpCode, (int)telemetryBuffer.size());
+    }
+    http.end();
   } else {
-    DEBUG_PORT.printf("⚠️ Sync failed (HTTP %d). Buffer size: %d records\n", httpCode, (int)telemetryBuffer.size());
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("ngrok-skip-browser-warning", "true");
+    int httpCode = http.POST(jsonPayload);
+    if (httpCode == 200 || httpCode == 201) {
+      DEBUG_PORT.printf("✅ Flushed %d offline records to server (HTTP %d)\n", (int)telemetryBuffer.size(), httpCode);
+      telemetryBuffer.clear();
+    } else {
+      DEBUG_PORT.printf("⚠️ Sync failed (HTTP %d). Buffer size: %d records\n", httpCode, (int)telemetryBuffer.size());
+    }
+    http.end();
   }
-  http.end();
 }
 
 bool elmConnected = false;

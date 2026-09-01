@@ -51,23 +51,35 @@ void startWiFi() {
   }
 }
 
-void sendLog(String message, String level = "info", String bt_status = "") {
-  DEBUG_PORT.println("[" + level + "] " + message);
+struct LogEntry {
+  String message;
+  String level;
+  String bt_status;
+};
 
-  if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http;
-    String baseUrl = String(serverUrlBase);
-    int idx = baseUrl.indexOf("/api/obd");
-    String url = (idx >= 0 ? baseUrl.substring(0, idx) : baseUrl) + "/api/device/log";
+std::vector<LogEntry> logQueue;
 
-    String cleanMsg = message;
+void flushLogsToServer() {
+  if (logQueue.empty()) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  String baseUrl = String(serverUrlBase);
+  int idx = baseUrl.indexOf("/api/obd");
+  String url = (idx >= 0 ? baseUrl.substring(0, idx) : baseUrl) + "/api/device/log";
+
+  while (!logQueue.empty() && WiFi.status() == WL_CONNECTED) {
+    LogEntry entry = logQueue.front();
+
+    String cleanMsg = entry.message;
     cleanMsg.replace("\"", "'");
+    cleanMsg.replace("\n", " ");
 
     String json = "{";
     json += "\"message\":\"" + cleanMsg + "\",";
-    json += "\"level\":\"" + level + "\"";
-    if (bt_status.length() > 0) {
-      json += ",\"bt_status\":\"" + bt_status + "\"";
+    json += "\"level\":\"" + entry.level + "\"";
+    if (entry.bt_status.length() > 0) {
+      json += ",\"bt_status\":\"" + entry.bt_status + "\"";
     }
     json += "}";
 
@@ -81,16 +93,38 @@ void sendLog(String message, String level = "info", String bt_status = "") {
       int code = http.POST(json);
       DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
       http.end();
+      if (code > 0) {
+        logQueue.erase(logQueue.begin());
+      } else {
+        break; // Stop loop if server request failed
+      }
     } else {
       http.begin(url);
       http.addHeader("Content-Type", "application/json");
+      http.addHeader("User-Agent", "ESP32");
       http.addHeader("ngrok-skip-browser-warning", "true");
       int code = http.POST(json);
       DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
       http.end();
+      if (code > 0) {
+        logQueue.erase(logQueue.begin());
+      } else {
+        break;
+      }
     }
   }
 }
+
+void sendLog(String message, String level = "info", String bt_status = "") {
+  DEBUG_PORT.println("[" + level + "] " + message);
+
+  LogEntry entry = {message, level, bt_status};
+  logQueue.push_back(entry);
+  if (logQueue.size() > 60) logQueue.erase(logQueue.begin());
+
+  flushLogsToServer();
+}
+
 
 void flushBufferToServer() {
   if (telemetryBuffer.empty()) return;
@@ -157,6 +191,7 @@ void flushBufferToServer() {
 
 bool elmConnected = false;
 bool elmInitialized = false;
+
 bool isDummyMac(uint8_t mac[6]) {
   if (mac[0] == 0x00 && mac[1] == 0x00 && mac[2] == 0x00 && mac[3] == 0x00 && mac[4] == 0x00 && mac[5] == 0x00) return true;
   if (mac[0] == 0x00 && mac[1] == 0x00 && mac[2] == 0x00 && mac[3] == 0x33 && mac[4] == 0x33 && mac[5] == 0x33) return true;
@@ -185,7 +220,7 @@ bool connectToELM327() {
   // Try standard target Bluetooth names
   for (const char* name : targetNames) {
     for (const char* p : pins) {
-      sendLog("📡 Спроба з'єднання з '" + String(name) + "' (PIN " + String(p) + ")...", "info", "connecting");
+      sendLog("📡 Спроба підключення до '" + String(name) + "' (PIN " + String(p) + ")...", "info", "connecting");
       SerialBT.setPin(p);
       if (SerialBT.connect(name)) {
         sendLog("✅ УСПІХ! З'єднано з OBD2 сканером '" + String(name) + "' (PIN " + String(p) + ")!", "success", "connected");
@@ -194,11 +229,11 @@ bool connectToELM327() {
     }
   }
 
-  sendLog("⚠️ Не вдалося підключитися за назвами. Скануємо Bluetooth-ефір...", "warn", "scanning");
+  sendLog("⚠️ Не вдалося підключитися за стандартними іменами. Запускаємо 5-секундний Bluetooth пошук пристроїв...", "warn", "scanning");
 
-  // Perform a 4-second Bluetooth discovery scan
+  // Perform a 5-second Bluetooth discovery scan
   BTScanResults *pResults = SerialBT.getScanResults();
-  if (SerialBT.discover(4000)) {
+  if (SerialBT.discover(5000)) {
     pResults = SerialBT.getScanResults();
     int count = pResults ? pResults->getCount() : 0;
     sendLog("🔍 Знайдено " + String(count) + " Bluetooth пристроїв поблизу:", "info", "scanning");
@@ -207,7 +242,7 @@ bool connectToELM327() {
       BTAdvertisedDevice *dev = pResults->getDevice(i);
       String devName = String(dev->getName().c_str());
       String devAddr = String(dev->getAddress().toString().c_str());
-      sendLog("📱 #" + String(i+1) + ": " + (devName.length() > 0 ? devName : "Приховане ім'я") + " [" + devAddr + "]", "info", "scanning");
+      sendLog("📱 Пристрій #" + String(i+1) + ": " + (devName.length() > 0 ? devName : "Приховане ім'я") + " [" + devAddr + "]", "info", "scanning");
 
       // Auto-connect if device name matches any OBD pattern
       String lowerName = devName;
@@ -259,12 +294,19 @@ void setup() {
   DEBUG_PORT.begin(115200);
   startWiFi();
 
+  sendLog("🚀 ESP32 завантажено! Запуск Bluetooth Master...", "info");
+
   SerialBT.setPin(elmPin);
   ELM_PORT.begin("ESP32-OBD2", true); // Master mode
   DEBUG_PORT.println("Bluetooth Master mode ready.");
 }
 
 void loop() {
+  // Always flush any queued system logs when WiFi is connected
+  if (WiFi.status() == WL_CONNECTED) {
+    flushLogsToServer();
+  }
+
   // Re-check WiFi connection every 10 seconds if disconnected
   if (WiFi.status() != WL_CONNECTED && (millis() - lastWifiRetry > 10000)) {
     lastWifiRetry = millis();

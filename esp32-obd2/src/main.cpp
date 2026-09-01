@@ -17,9 +17,8 @@ const char* serverUrlBase = "https://mankind-comprised-devotion.ngrok-free.dev/a
 const char* elmName = "OBDII";
 const char* elmPin = "1234";
 
-// Optional: Set your ELM327 MAC address here if name connection fails
-// Example: uint8_t elmMac[6] = {0x00, 0x1D, 0xA5, 0x68, 0x98, 0x8B};
-uint8_t elmMac[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+// Target ELM327 MAC Address
+uint8_t elmMac[6] = {0x00, 0x00, 0x00, 0x33, 0x33, 0x33};
 
 BluetoothSerial SerialBT;
 #define ELM_PORT SerialBT

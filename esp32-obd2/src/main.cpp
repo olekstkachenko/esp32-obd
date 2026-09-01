@@ -11,7 +11,7 @@ const char* ssid = "Pajero";
 const char* password = "090384wifi";
 
 // --- Server Details ---
-const char* serverUrlBase = "https://mankind-comprised-devotion.ngrok-free.dev/api/obd";
+const char* serverUrlBase = "http://mankind-comprised-devotion.ngrok-free.dev/api/obd";
 
 // --- ELM327 Bluetooth Target ---
 const char* elmName = "OBDII";

@@ -6,6 +6,9 @@
 #include <WiFiClientSecure.h>
 #include <vector>
 
+#include "esp_bt_main.h"
+#include "esp_gap_bt_api.h"
+
 // --- WiFi Credentials ---
 const char* ssid = "Pajero";
 const char* password = "090384wifi";
@@ -22,6 +25,17 @@ uint8_t elmMac[6] = {0x00, 0x00, 0x00, 0x33, 0x33, 0x33};
 
 // --- Forward Declarations ---
 void sendLog(String message, String level = "info", String bt_status = "");
+
+void clearBluetoothBonds() {
+  int dev_num = esp_bt_gap_get_bond_device_num();
+  if (dev_num > 0) {
+    esp_bd_addr_t dev_list[dev_num];
+    esp_bt_gap_get_bond_device_list(&dev_num, dev_list);
+    for (int i = 0; i < dev_num; i++) {
+      esp_bt_gap_remove_bond_device(dev_list[i]);
+    }
+  }
+}
 
 BluetoothSerial SerialBT;
 #define ELM_PORT SerialBT
@@ -187,6 +201,7 @@ const char* targetNames[] = {"OBDII", "OBD2", "ELM327", "vLinker", "Viecar", "OB
 const char* pins[] = {"1234", "0000", "6789", "1111", "8888", "123456", ""};
 
 bool connectToELM327() {
+  clearBluetoothBonds();
   sendLog("🎬 [Крок 1/4] Перевірка Bluetooth. Вільна пам'ять RAM: " + String(ESP.getFreeHeap() / 1024) + " KB", "info", "connecting");
 
   bool validMac = !isDummyMac(elmMac);

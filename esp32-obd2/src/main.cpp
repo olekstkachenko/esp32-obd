@@ -13,16 +13,24 @@ const char* password = "090384wifi";
 // --- Server Details ---
 const char* serverUrlBase = "https://mankind-comprised-devotion.ngrok-free.dev/api/obd";
 
+// --- ELM327 Bluetooth Target ---
+const char* elmName = "OBDII";
+const char* elmPin = "1234";
+
+// Optional: Set your ELM327 MAC address here if name connection fails
+// Example: uint8_t elmMac[6] = {0x00, 0x1D, 0xA5, 0x68, 0x98, 0x8B};
+uint8_t elmMac[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
 BluetoothSerial SerialBT;
 #define ELM_PORT SerialBT
 #define DEBUG_PORT Serial
 
 ELM327 myELM327;
-const char* pin = "1234"; 
 
 unsigned long lastUpdate = 0;
 const unsigned long updateInterval = 1000; // 1 second
 unsigned long lastWifiRetry = 0;
+unsigned long lastELMRetry = 0;
 
 struct OBDRecord {
   float rpm;
@@ -44,20 +52,53 @@ void startWiFi() {
   }
 }
 
+void sendLog(String message, String level = "info", String bt_status = "") {
+  DEBUG_PORT.println("[" + level + "] " + message);
+
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String baseUrl = String(serverUrlBase);
+    int idx = baseUrl.indexOf("/api/obd");
+    String url = (idx >= 0 ? baseUrl.substring(0, idx) : baseUrl) + "/api/device/log";
+
+    if (url.startsWith("https")) {
+      WiFiClientSecure *client = new WiFiClientSecure;
+      client->setInsecure();
+      http.begin(*client, url);
+    } else {
+      http.begin(url);
+    }
+
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("ngrok-skip-browser-warning", "true");
+
+    String cleanMsg = message;
+    cleanMsg.replace("\"", "'");
+
+    String json = "{";
+    json += "\"message\":\"" + cleanMsg + "\",";
+    json += "\"level\":\"" + level + "\"";
+    if (bt_status.length() > 0) {
+      json += ",\"bt_status\":\"" + bt_status + "\"";
+    }
+    json += "}";
+
+    http.POST(json);
+    http.end();
+  }
+}
+
 void flushBufferToServer() {
   if (telemetryBuffer.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
   String url = String(serverUrlBase);
-  
-  if (telemetryBuffer.size() > 1) {
-    url += "/batch";
-  }
+  if (telemetryBuffer.size() > 1) url += "/batch";
 
   if (url.startsWith("https")) {
     WiFiClientSecure *client = new WiFiClientSecure;
-    client->setInsecure(); // Skip certificate validation for ngrok/self-signed
+    client->setInsecure();
     http.begin(*client, url);
   } else {
     http.begin(url);
@@ -101,64 +142,44 @@ void flushBufferToServer() {
   http.end();
 }
 
-void sendLog(String message, String level = "info", String bt_status = "") {
-  DEBUG_PORT.println("[" + level + "] " + message);
-
-  if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http;
-    String baseUrl = String(serverUrlBase);
-    int idx = baseUrl.indexOf("/api/obd");
-    String url = (idx >= 0 ? baseUrl.substring(0, idx) : baseUrl) + "/api/device/log";
-
-    if (url.startsWith("https")) {
-      WiFiClientSecure *client = new WiFiClientSecure;
-      client->setInsecure();
-      http.begin(*client, url);
-    } else {
-      http.begin(url);
-    }
-
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("ngrok-skip-browser-warning", "true");
-
-    String json = "{";
-    json += "\"message\":\"" + message + "\",";
-    json += "\"level\":\"" + level + "\"";
-    if (bt_status.length() > 0) {
-      json += ",\"bt_status\":\"" + bt_status + "\"";
-    }
-    json += "}";
-
-    http.POST(json);
-    http.end();
-  }
-}
-
 bool elmConnected = false;
 bool elmInitialized = false;
 
-const char* targetNames[] = {"OBDII", "OBD2", "ELM327", "vLinker", "Viecar", "OBD-II"};
-const char* pins[] = {"1234", "0000"};
-
 bool connectToELM327() {
-  sendLog("📡 Пошук та підключення до Bluetooth OBD2...", "info", "connecting");
+  bool hasMac = (elmMac[0] != 0 || elmMac[1] != 0 || elmMac[2] != 0 || elmMac[3] != 0 || elmMac[4] != 0 || elmMac[5] != 0);
 
-  for (const char* name : targetNames) {
-    for (const char* p : pins) {
-      DEBUG_PORT.printf("Attempting connection to '%s' with PIN '%s'...\n", name, p);
-      SerialBT.setPin(p);
-      if (SerialBT.connect(name)) {
-        sendLog("✅ З’єднано з Bluetooth-сканером '" + String(name) + "' (PIN " + String(p) + ")!", "success", "connected");
-        return true;
-      }
+  if (hasMac) {
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", elmMac[0], elmMac[1], elmMac[2], elmMac[3], elmMac[4], elmMac[5]);
+    sendLog("📡 Спроба з'єднання за MAC-адресою: " + String(macStr) + " (PIN " + String(elmPin) + ")...", "info", "connecting");
+    
+    SerialBT.setPin(elmPin);
+    if (SerialBT.connect(elmMac)) {
+      sendLog("✅ УСПІХ! З'єднано з OBD2 сканером за MAC [" + String(macStr) + "]!", "success", "connected");
+      return true;
     }
   }
 
-  sendLog("⚠️ Не вдалося підключитися за стандартними іменами (OBDII, OBD2, ELM327). Запускаємо сканування Bluetooth-ефіру...", "warn", "scanning");
+  sendLog("📡 Спроба з'єднання за ім'ям '" + String(elmName) + "' (PIN " + String(elmPin) + ")...", "info", "connecting");
+  SerialBT.setPin(elmPin);
+  
+  if (SerialBT.connect(elmName)) {
+    sendLog("✅ УСПІХ! З'єднано з OBD2 сканером '" + String(elmName) + "'!", "success", "connected");
+    return true;
+  }
 
-  // Perform Bluetooth Discovery Scan
+  // If name fails with 1234, try PIN 0000
+  SerialBT.setPin("0000");
+  if (SerialBT.connect(elmName)) {
+    sendLog("✅ УСПІХ! З'єднано з OBD2 сканером '" + String(elmName) + "' (PIN 0000)!", "success", "connected");
+    return true;
+  }
+
+  sendLog("⚠️ Не вдалося підключитися до '" + String(elmName) + "'. Скануємо пристрої поблизу...", "warn", "scanning");
+
+  // Perform a 3-second Bluetooth discovery scan
   BTScanResults *pResults = SerialBT.getScanResults();
-  if (SerialBT.discover(5000)) { // Scan for 5 seconds
+  if (SerialBT.discover(3000)) {
     pResults = SerialBT.getScanResults();
     int count = pResults ? pResults->getCount() : 0;
     sendLog("🔍 Знайдено " + String(count) + " Bluetooth пристроїв поблизу:", "info", "scanning");
@@ -167,27 +188,12 @@ bool connectToELM327() {
       BTAdvertisedDevice *dev = pResults->getDevice(i);
       String devName = String(dev->getName().c_str());
       String devAddr = String(dev->getAddress().toString().c_str());
-      sendLog("📱 Пристрій #" + String(i+1) + ": " + (devName.length() > 0 ? devName : "Приховане ім'я") + " [" + devAddr + "]", "info", "scanning");
-
-      String lowerName = devName;
-      lowerName.toLowerCase();
-      if (lowerName.indexOf("obd") >= 0 || lowerName.indexOf("elm") >= 0 || lowerName.indexOf("linker") >= 0 || lowerName.indexOf("car") >= 0) {
-        sendLog("🎯 Виявлено схожий OBD пристрій: '" + devName + "'. Пробуємо підключення за MAC " + devAddr + "...", "info", "connecting");
-        
-        for (const char* p : pins) {
-          SerialBT.setPin(p);
-          if (SerialBT.connect(dev->getAddress())) {
-            sendLog("🎉 УСПІХ! Підключено до '" + devName + "' [" + devAddr + "]!", "success", "connected");
-            return true;
-          }
-        }
-      }
+      sendLog("📱 Пристрій #" + String(i+1) + ": " + (devName.length() > 0 ? devName : "Без імені") + " [" + devAddr + "]", "info", "scanning");
     }
   } else {
-    sendLog("❌ Не знайдено жодного Bluetooth-пристрою поблизу.", "error", "disconnected");
+    sendLog("❌ Bluetooth пристроїв поблизу не виявлено.", "error", "disconnected");
   }
 
-  sendLog("❌ Повторна спроба через 5 секунд...", "warn", "disconnected");
   return false;
 }
 
@@ -196,8 +202,7 @@ void ensureELMConnected() {
     elmConnected = false;
     elmInitialized = false;
     
-    static unsigned long lastELMRetry = 0;
-    if (millis() - lastELMRetry > 5000) { // Retry every 5 seconds
+    if (millis() - lastELMRetry > 6000) { // Retry every 6 seconds
       lastELMRetry = millis();
       if (connectToELM327()) {
         elmConnected = true;
@@ -207,12 +212,12 @@ void ensureELMConnected() {
   }
 
   if (elmConnected && !elmInitialized) {
-    sendLog("⚙️ Ініціалізація протоколу ELM327...", "info", "connecting");
+    sendLog("⚙️ З'єднання є! Ініціалізуємо протокол ELM327...", "info", "connecting");
     if (myELM327.begin(ELM_PORT, true, 2000)) {
-      sendLog("🚀 ELM327 ініціалізовано! Готовий до збору телеметрії.", "success", "connected");
+      sendLog("🚀 ELM327 ініціалізовано! Дані зчитано успішно.", "success", "connected");
       elmInitialized = true;
     } else {
-      sendLog("⚠️ Помилка ELM327 begin. Повтор ініціалізації...", "warn", "connecting");
+      sendLog("⚠️ ELM327 begin() не відповів, повтор через 2с...", "warn", "connecting");
     }
   }
 }
@@ -221,8 +226,9 @@ void setup() {
   DEBUG_PORT.begin(115200);
   startWiFi();
 
-  ELM_PORT.begin("ESP32-OBD2", true); // Enable Bluetooth Master mode
-  DEBUG_PORT.println("Bluetooth Master mode started. Waiting for ELM327 connection...");
+  SerialBT.setPin(elmPin);
+  ELM_PORT.begin("ESP32-OBD2", true); // Master mode
+  DEBUG_PORT.println("Bluetooth Master mode ready.");
 }
 
 void loop() {
@@ -233,7 +239,7 @@ void loop() {
     WiFi.begin(ssid, password);
   }
 
-  // Maintain & auto-reconnect Bluetooth connection to ELM327 OBDII
+  // Maintain Bluetooth OBD2 connection
   ensureELMConnected();
 
   if (elmInitialized && SerialBT.connected()) {
@@ -245,7 +251,7 @@ void loop() {
       float speed = myELM327.kph();
       float temp = myELM327.engineCoolantTemp();
       float volt = myELM327.batteryVoltage();
-      float maf = myELM327.mafRate(); // g/s
+      float maf = myELM327.mafRate();
 
       float fuel_rate = (maf > 0 && myELM327.nb_rx_state == ELM_SUCCESS) ? (maf * 3600.0 / 14.7 / 717.0) : 0;
 
@@ -253,13 +259,11 @@ void loop() {
         DEBUG_PORT.printf("RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
                           rpm, speed, temp, volt, fuel_rate, (int)telemetryBuffer.size());
         
-        // Store in buffer
         if (telemetryBuffer.size() >= MAX_BUFFER_SIZE) {
-          telemetryBuffer.erase(telemetryBuffer.begin()); // FIFO drop oldest if buffer is full
+          telemetryBuffer.erase(telemetryBuffer.begin());
         }
         telemetryBuffer.push_back({rpm, speed, temp, volt, fuel_rate, dt});
 
-        // Try flushing buffer if WiFi is connected
         if (WiFi.status() == WL_CONNECTED) {
           flushBufferToServer();
         }

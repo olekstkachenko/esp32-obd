@@ -20,6 +20,9 @@ const char* elmPin = "1234";
 // Target ELM327 MAC Address
 uint8_t elmMac[6] = {0x00, 0x00, 0x00, 0x33, 0x33, 0x33};
 
+// --- Forward Declarations ---
+void sendLog(String message, String level = "info", String bt_status = "");
+
 BluetoothSerial SerialBT;
 #define ELM_PORT SerialBT
 #define DEBUG_PORT Serial
@@ -48,6 +51,12 @@ void startWiFi() {
     DEBUG_PORT.println("Connecting to WiFi (non-blocking)...");
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, password);
+  } else {
+    static bool loggedWifiConnected = false;
+    if (!loggedWifiConnected) {
+      loggedWifiConnected = true;
+      sendLog("🌐 Wi-Fi підключено до '" + String(ssid) + "'! IP: " + WiFi.localIP().toString() + " (Сигнал RSSI: " + String(WiFi.RSSI()) + " dBm)", "success");
+    }
   }
 }
 
@@ -115,7 +124,7 @@ void flushLogsToServer() {
   }
 }
 
-void sendLog(String message, String level = "info", String bt_status = "") {
+void sendLog(String message, String level, String bt_status) {
   DEBUG_PORT.println("[" + level + "] " + message);
 
   LogEntry entry = {message, level, bt_status};
@@ -189,6 +198,7 @@ void flushBufferToServer() {
   }
 }
 
+
 bool elmConnected = false;
 bool elmInitialized = false;
 
@@ -203,65 +213,78 @@ const char* targetNames[] = {"OBDII", "OBD2", "ELM327", "vLinker", "Viecar", "OB
 const char* pins[] = {"1234", "0000"};
 
 bool connectToELM327() {
+  sendLog("🎬 [Крок 1/4] Перевірка Bluetooth. Вільна пам'ять RAM: " + String(ESP.getFreeHeap() / 1024) + " KB", "info", "connecting");
+
   bool validMac = !isDummyMac(elmMac);
 
   if (validMac) {
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", elmMac[0], elmMac[1], elmMac[2], elmMac[3], elmMac[4], elmMac[5]);
-    sendLog("📡 Спроба з'єднання за MAC-адресою: " + String(macStr) + " (PIN " + String(elmPin) + ")...", "info", "connecting");
+    sendLog("📡 Спроба з'єднання за зафіксованою MAC-адресою: " + String(macStr) + " (PIN " + String(elmPin) + ")...", "info", "connecting");
     
     SerialBT.setPin(elmPin);
     if (SerialBT.connect(elmMac)) {
-      sendLog("✅ УСПІХ! З'єднано з OBD2 сканером за MAC [" + String(macStr) + "]!", "success", "connected");
+      sendLog("🎉 УСПІХ! З'єднано по Bluetooth з MAC [" + String(macStr) + "]!", "success", "connected");
       return true;
+    } else {
+      sendLog("❌ З'єднання за MAC [" + String(macStr) + "] не вдалося.", "warn", "connecting");
     }
   }
 
-  // Try standard target Bluetooth names
-  for (const char* name : targetNames) {
-    for (const char* p : pins) {
-      sendLog("📡 Спроба підключення до '" + String(name) + "' (PIN " + String(p) + ")...", "info", "connecting");
-      SerialBT.setPin(p);
-      if (SerialBT.connect(name)) {
-        sendLog("✅ УСПІХ! З'єднано з OBD2 сканером '" + String(name) + "' (PIN " + String(p) + ")!", "success", "connected");
-        return true;
-      }
-    }
-  }
+  // Step 2: Bluetooth Discovery Inquiry Scan
+  sendLog("🔎 [Крок 2/4] Скануємо Bluetooth-ефір навколо (6 секунд)...", "info", "scanning");
 
-  sendLog("⚠️ Не вдалося підключитися за стандартними іменами. Запускаємо 5-секундний Bluetooth пошук пристроїв...", "warn", "scanning");
-
-  // Perform a 5-second Bluetooth discovery scan
   BTScanResults *pResults = SerialBT.getScanResults();
-  if (SerialBT.discover(5000)) {
+  if (SerialBT.discover(6000)) {
     pResults = SerialBT.getScanResults();
     int count = pResults ? pResults->getCount() : 0;
-    sendLog("🔍 Знайдено " + String(count) + " Bluetooth пристроїв поблизу:", "info", "scanning");
+    sendLog("📡 Знайдено " + String(count) + " Bluetooth пристроїв у зоні досяжності:", "info", "scanning");
 
     for (int i = 0; i < count; i++) {
       BTAdvertisedDevice *dev = pResults->getDevice(i);
       String devName = String(dev->getName().c_str());
       String devAddr = String(dev->getAddress().toString().c_str());
-      sendLog("📱 Пристрій #" + String(i+1) + ": " + (devName.length() > 0 ? devName : "Приховане ім'я") + " [" + devAddr + "]", "info", "scanning");
+      int rssi = dev->getRSSI();
+
+      sendLog("  📱 #" + String(i+1) + ": " + (devName.length() > 0 ? devName : "<Приховане ім'я>") + 
+              " [" + devAddr + "] Сигнал: " + String(rssi) + " dBm", "info", "scanning");
 
       // Auto-connect if device name matches any OBD pattern
       String lowerName = devName;
       lowerName.toLowerCase();
       if (lowerName.indexOf("obd") >= 0 || lowerName.indexOf("elm") >= 0 || lowerName.indexOf("linker") >= 0 || lowerName.indexOf("car") >= 0) {
-        sendLog("🎯 Авто-підключення до знайденого OBD пристрою '" + devName + "' [" + devAddr + "]...", "info", "connecting");
+        sendLog("🎯 Виявлено схожий OBD2 адаптер '" + devName + "'! Спроба підключення по MAC " + devAddr + "...", "info", "connecting");
+
         for (const char* p : pins) {
+          sendLog("🔑 Спроба підключення з PIN '" + String(p) + "'...", "info", "connecting");
           SerialBT.setPin(p);
           if (SerialBT.connect(dev->getAddress())) {
-            sendLog("🎉 УСПІХ! З'єднано з '" + devName + "' [" + devAddr + "]!", "success", "connected");
+            sendLog("🎉 УСПІХ! З'єднано по Bluetooth з '" + devName + "' [" + devAddr + "]!", "success", "connected");
             return true;
+          } else {
+            sendLog("❌ Пристрій '" + devName + "' відхилив PIN '" + String(p) + "'.", "warn", "connecting");
           }
         }
       }
     }
   } else {
-    sendLog("❌ Bluetooth пристроїв поблизу не виявлено.", "error", "disconnected");
+    sendLog("⚠️ Сканування закінчилося: жодного пристрою Bluetooth не знайдено.", "warn", "scanning");
   }
 
+  // Step 3: Direct connection by target names
+  sendLog("📡 [Крок 3/4] Спроба прямого підключення за ім'ям 'OBDII'...", "info", "connecting");
+  for (const char* name : targetNames) {
+    for (const char* p : pins) {
+      sendLog("🔑 Спроба з'єднання з '" + String(name) + "' (PIN " + String(p) + ")...", "info", "connecting");
+      SerialBT.setPin(p);
+      if (SerialBT.connect(name)) {
+        sendLog("🎉 УСПІХ! З'єднано по Bluetooth з сканером '" + String(name) + "'!", "success", "connected");
+        return true;
+      }
+    }
+  }
+
+  sendLog("❌ [Крок 4/4] Жоден спосіб підключення не спрацював. Повторний цикл через 6 секунд...", "error", "disconnected");
   return false;
 }
 
@@ -270,7 +293,7 @@ void ensureELMConnected() {
     elmConnected = false;
     elmInitialized = false;
     
-    if (millis() - lastELMRetry > 6000) { // Retry every 6 seconds
+    if (millis() - lastELMRetry > 6000) {
       lastELMRetry = millis();
       if (connectToELM327()) {
         elmConnected = true;
@@ -280,12 +303,12 @@ void ensureELMConnected() {
   }
 
   if (elmConnected && !elmInitialized) {
-    sendLog("⚙️ З'єднання є! Ініціалізуємо протокол ELM327...", "info", "connecting");
-    if (myELM327.begin(ELM_PORT, true, 2000)) {
-      sendLog("🚀 ELM327 ініціалізовано! Дані зчитано успішно.", "success", "connected");
+    sendLog("⚙️ Bluetooth з'єднання є! Ініціалізуємо протокол ELM327 (AT-команди)...", "info", "connecting");
+    if (myELM327.begin(ELM_PORT, true, 3000)) {
+      sendLog("🚀 УСПІХ! Протокол ELM327 успішно ініціалізовано! Почався збір даних.", "success", "connected");
       elmInitialized = true;
     } else {
-      sendLog("⚠️ ELM327 begin() не відповів, повтор через 2с...", "warn", "connecting");
+      sendLog("⚠️ Bluetooth з'єднано, але сканер не відповів на протокол ELM327 (повтор ініціалізації)...", "warn", "connecting");
     }
   }
 }

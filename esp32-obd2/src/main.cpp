@@ -96,26 +96,29 @@ void flushLogsToServer() {
       WiFiClientSecure client;
       client.setInsecure();
       http.begin(client, url);
+      http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
       http.addHeader("Content-Type", "application/json");
       http.addHeader("User-Agent", "ESP32");
       http.addHeader("ngrok-skip-browser-warning", "true");
       int code = http.POST(json);
       DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
       http.end();
-      if (code > 0) {
+      if (code == 200 || code == 201) {
         logQueue.erase(logQueue.begin());
       } else {
         break; // Stop loop if server request failed
       }
     } else {
-      http.begin(url);
+      WiFiClient client;
+      http.begin(client, url);
+      http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
       http.addHeader("Content-Type", "application/json");
       http.addHeader("User-Agent", "ESP32");
       http.addHeader("ngrok-skip-browser-warning", "true");
       int code = http.POST(json);
       DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
       http.end();
-      if (code > 0) {
+      if (code == 200 || code == 201) {
         logQueue.erase(logQueue.begin());
       } else {
         break;

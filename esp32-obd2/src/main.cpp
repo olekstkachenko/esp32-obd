@@ -11,7 +11,7 @@ const char* ssid = "Pajero";
 const char* password = "090384wifi";
 
 // --- Server Details ---
-const char* serverUrlBase = "http://mankind-comprised-devotion.ngrok-free.dev/api/obd";
+const char* serverUrlBase = "https://mankind-comprised-devotion.ngrok-free.dev/api/obd";
 
 // --- ELM327 Bluetooth Target ---
 const char* elmName = "OBDII";
@@ -102,12 +102,12 @@ void flushLogsToServer() {
       http.addHeader("ngrok-skip-browser-warning", "true");
       int code = http.POST(json);
       DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
-      http.end();
-      if (code == 200 || code == 201) {
+      if (code == 200 || code == 201 || code == 307) {
         logQueue.erase(logQueue.begin());
       } else {
         break; // Stop loop if server request failed
       }
+      http.end();
     } else {
       WiFiClient client;
       http.begin(client, url);
@@ -117,12 +117,12 @@ void flushLogsToServer() {
       http.addHeader("ngrok-skip-browser-warning", "true");
       int code = http.POST(json);
       DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
-      http.end();
-      if (code == 200 || code == 201) {
+      if (code == 200 || code == 201 || code == 307) {
         logQueue.erase(logQueue.begin());
       } else {
         break;
       }
+      http.end();
     }
   }
 }
@@ -213,7 +213,7 @@ bool isDummyMac(uint8_t mac[6]) {
 }
 
 const char* targetNames[] = {"OBDII", "OBD2", "ELM327", "vLinker", "Viecar", "OBD-II"};
-const char* pins[] = {"1234", "0000"};
+const char* pins[] = {"1234", "0000", "6789", "1111", "8888", "123456", ""};
 
 bool connectToELM327() {
   sendLog("🎬 [Крок 1/4] Перевірка Bluetooth. Вільна пам'ять RAM: " + String(ESP.getFreeHeap() / 1024) + " KB", "info", "connecting");

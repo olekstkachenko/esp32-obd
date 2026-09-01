@@ -142,6 +142,7 @@ void flushBufferToServer() {
 }
 
 bool elmConnected = false;
+bool elmInitialized = false;
 bool isDummyMac(uint8_t mac[6]) {
   if (mac[0] == 0x00 && mac[1] == 0x00 && mac[2] == 0x00 && mac[3] == 0x00 && mac[4] == 0x00 && mac[5] == 0x00) return true;
   if (mac[0] == 0x00 && mac[1] == 0x00 && mac[2] == 0x00 && mac[3] == 0x33 && mac[4] == 0x33 && mac[5] == 0x33) return true;

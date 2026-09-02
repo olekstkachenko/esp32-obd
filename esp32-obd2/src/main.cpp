@@ -14,7 +14,7 @@ const char* ssid = "Pajero";
 const char* password = "090384wifi";
 
 // --- Server Details ---
-const char* serverUrlBase = "https://mankind-comprised-devotion.ngrok-free.dev/api/obd";
+const char* serverUrlBase = "http://chief-winston-express-times.trycloudflare.com/api/obd";
 
 // --- ELM327 Bluetooth Target ---
 const char* elmName = "OBDII";
@@ -82,22 +82,12 @@ struct LogEntry {
 
 std::vector<LogEntry> logQueue;
 
-WiFiClientSecure sharedSSLClient;
-static bool sslInsecureInitialized = false;
-
-void initSharedSSL() {
-  if (!sslInsecureInitialized) {
-    sharedSSLClient.setInsecure();
-    sslInsecureInitialized = true;
-  }
-}
-
 void flushLogsToServer() {
   if (logQueue.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
-  initSharedSSL();
   HTTPClient http;
+  WiFiClient client;
 
   String baseUrl = String(serverUrlBase);
   int idx = baseUrl.indexOf("/api/obd");
@@ -119,10 +109,9 @@ void flushLogsToServer() {
     }
     json += "}";
 
-    http.begin(sharedSSLClient, url);
+    http.begin(client, url);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", "ESP32");
-    http.addHeader("ngrok-skip-browser-warning", "true");
     int code = http.POST(json);
     DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
     http.end();
@@ -150,8 +139,8 @@ void flushBufferToServer() {
   if (telemetryBuffer.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
-  initSharedSSL();
   HTTPClient http;
+  WiFiClient client;
   String url = String(serverUrlBase);
   if (telemetryBuffer.size() > 1) url += "/batch";
 
@@ -180,10 +169,9 @@ void flushBufferToServer() {
     jsonPayload += "]}";
   }
 
-  http.begin(sharedSSLClient, url);
+  http.begin(client, url);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("User-Agent", "ESP32");
-  http.addHeader("ngrok-skip-browser-warning", "true");
   int httpCode = http.POST(jsonPayload);
   if (httpCode == 200 || httpCode == 201) {
     DEBUG_PORT.printf("✅ Flushed %d offline records to server (HTTP %d)\n", (int)telemetryBuffer.size(), httpCode);

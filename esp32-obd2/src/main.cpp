@@ -87,11 +87,15 @@ void flushLogsToServer() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
+  WiFiClientSecure client;
+  client.setInsecure();
+
   String baseUrl = String(serverUrlBase);
   int idx = baseUrl.indexOf("/api/obd");
   String url = (idx >= 0 ? baseUrl.substring(0, idx) : baseUrl) + "/api/device/log";
 
-  while (!logQueue.empty() && WiFi.status() == WL_CONNECTED) {
+  int count = 0;
+  while (!logQueue.empty() && WiFi.status() == WL_CONNECTED && count < 5) {
     LogEntry entry = logQueue.front();
 
     String cleanMsg = entry.message;
@@ -106,8 +110,6 @@ void flushLogsToServer() {
     }
     json += "}";
 
-    WiFiClientSecure client;
-    client.setInsecure();
     http.begin(client, url);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", "ESP32");
@@ -118,6 +120,7 @@ void flushLogsToServer() {
 
     if (code == 200 || code == 201) {
       logQueue.erase(logQueue.begin());
+      count++;
     } else {
       break;
     }

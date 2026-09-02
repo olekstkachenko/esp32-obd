@@ -204,30 +204,36 @@ bool connectToELM327() {
   clearBluetoothBonds();
   sendLog("🎬 [Крок 1/4] Перевірка Bluetooth. Вільна пам'ять RAM: " + String(ESP.getFreeHeap() / 1024) + " KB", "info", "connecting");
 
-  bool validMac = !isDummyMac(elmMac);
+  // Step 1: Fast direct connection by target name "OBDII" (Saves RAM, 0ms scan delay)
+  sendLog("📡 [Крок 1/2] Пряме з'єднання з сканером 'OBDII' (PIN '1234')...", "info", "connecting");
+  SerialBT.setPin(elmPin);
+  if (SerialBT.connect(elmName)) {
+    sendLog("🎉 УСПІХ! З'єднано по Bluetooth з сканером '" + String(elmName) + "'!", "success", "connected");
+    return true;
+  }
+  sendLog("⚠️ Пряме підключення не вдалося. Переходимо до розширеного пошуку...", "warn", "connecting");
 
+  bool validMac = !isDummyMac(elmMac);
   if (validMac) {
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", elmMac[0], elmMac[1], elmMac[2], elmMac[3], elmMac[4], elmMac[5]);
-    sendLog("📡 Спроба з'єднання за зафіксованою MAC-адресою: " + String(macStr) + " (PIN " + String(elmPin) + ")...", "info", "connecting");
+    sendLog("📡 Спроба з'єднання за MAC-адресою: " + String(macStr) + "...", "info", "connecting");
     
     SerialBT.setPin(elmPin);
     if (SerialBT.connect(elmMac)) {
       sendLog("🎉 УСПІХ! З'єднано по Bluetooth з MAC [" + String(macStr) + "]!", "success", "connected");
       return true;
-    } else {
-      sendLog("❌ З'єднання за MAC [" + String(macStr) + "] не вдалося.", "warn", "connecting");
     }
   }
 
-  // Step 2: Bluetooth Discovery Inquiry Scan
-  sendLog("🔎 [Крок 2/4] Скануємо Bluetooth-ефір навколо (6 секунд)...", "info", "scanning");
+  // Step 2: Bluetooth Discovery Inquiry Scan (fallback only if direct connect failed)
+  sendLog("🔎 [Крок 2/2] Скануємо Bluetooth-ефір навколо...", "info", "scanning");
 
   BTScanResults *pResults = SerialBT.getScanResults();
-  if (SerialBT.discover(6000)) {
+  if (SerialBT.discover(4000)) {
     pResults = SerialBT.getScanResults();
     int count = pResults ? pResults->getCount() : 0;
-    sendLog("📡 Знайдено " + String(count) + " Bluetooth пристроїв у зоні досяжності:", "info", "scanning");
+    sendLog("📡 Знайдено " + String(count) + " пристроїв:", "info", "scanning");
 
     for (int i = 0; i < count; i++) {
       BTAdvertisedDevice *dev = pResults->getDevice(i);
@@ -238,42 +244,22 @@ bool connectToELM327() {
       sendLog("  📱 #" + String(i+1) + ": " + (devName.length() > 0 ? devName : "<Приховане ім'я>") + 
               " [" + devAddr + "] Сигнал: " + String(rssi) + " dBm", "info", "scanning");
 
-      // Auto-connect if device name matches any OBD pattern
       String lowerName = devName;
       lowerName.toLowerCase();
       if (lowerName.indexOf("obd") >= 0 || lowerName.indexOf("elm") >= 0 || lowerName.indexOf("linker") >= 0 || lowerName.indexOf("car") >= 0) {
-        sendLog("🎯 Виявлено схожий OBD2 адаптер '" + devName + "'! Спроба підключення по MAC " + devAddr + "...", "info", "connecting");
+        sendLog("🎯 Виявлено сканер '" + devName + "'! Спроба підключення...", "info", "connecting");
 
         for (const char* p : pins) {
-          sendLog("🔑 Спроба підключення з PIN '" + String(p) + "'...", "info", "connecting");
           SerialBT.setPin(p);
           if (SerialBT.connect(dev->getAddress())) {
-            sendLog("🎉 УСПІХ! З'єднано по Bluetooth з '" + devName + "' [" + devAddr + "]!", "success", "connected");
+            sendLog("🎉 УСПІХ! З'єднано з '" + devName + "' [" + devAddr + "]!", "success", "connected");
             return true;
-          } else {
-            sendLog("❌ Пристрій '" + devName + "' відхилив PIN '" + String(p) + "'.", "warn", "connecting");
           }
         }
       }
     }
-  } else {
-    sendLog("⚠️ Сканування закінчилося: жодного пристрою Bluetooth не знайдено.", "warn", "scanning");
   }
 
-  // Step 3: Direct connection by target names
-  sendLog("📡 [Крок 3/4] Спроба прямого підключення за ім'ям 'OBDII'...", "info", "connecting");
-  for (const char* name : targetNames) {
-    for (const char* p : pins) {
-      sendLog("🔑 Спроба з'єднання з '" + String(name) + "' (PIN " + String(p) + ")...", "info", "connecting");
-      SerialBT.setPin(p);
-      if (SerialBT.connect(name)) {
-        sendLog("🎉 УСПІХ! З'єднано по Bluetooth з сканером '" + String(name) + "'!", "success", "connected");
-        return true;
-      }
-    }
-  }
-
-  sendLog("❌ [Крок 4/4] Жоден спосіб підключення не спрацював. Повторний цикл через 6 секунд...", "error", "disconnected");
   return false;
 }
 

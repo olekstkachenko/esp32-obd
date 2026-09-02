@@ -14,7 +14,7 @@ const char* ssid = "Pajero";
 const char* password = "090384wifi";
 
 // --- Server Details ---
-const char* serverUrlBase = "http://mankind-comprised-devotion.ngrok-free.dev/api/obd";
+const char* serverUrlBase = "https://mankind-comprised-devotion.ngrok-free.dev/api/obd";
 
 // --- ELM327 Bluetooth Target ---
 const char* elmName = "OBDII";
@@ -90,7 +90,6 @@ void flushLogsToServer() {
   String baseUrl = String(serverUrlBase);
   int idx = baseUrl.indexOf("/api/obd");
   String url = (idx >= 0 ? baseUrl.substring(0, idx) : baseUrl) + "/api/device/log";
-  url.replace("https://", "http://");
 
   while (!logQueue.empty() && WiFi.status() == WL_CONNECTED) {
     LogEntry entry = logQueue.front();
@@ -107,9 +106,9 @@ void flushLogsToServer() {
     }
     json += "}";
 
-    WiFiClient client;
+    WiFiClientSecure client;
+    client.setInsecure();
     http.begin(client, url);
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", "ESP32");
     http.addHeader("ngrok-skip-browser-warning", "true");
@@ -117,7 +116,7 @@ void flushLogsToServer() {
     DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
     http.end();
 
-    if (code > 0) {
+    if (code == 200 || code == 201) {
       logQueue.erase(logQueue.begin());
     } else {
       break;
@@ -135,14 +134,12 @@ void sendLog(String message, String level, String bt_status) {
   flushLogsToServer();
 }
 
-
 void flushBufferToServer() {
   if (telemetryBuffer.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
   String url = String(serverUrlBase);
-  url.replace("https://", "http://");
   if (telemetryBuffer.size() > 1) url += "/batch";
 
   String jsonPayload;
@@ -170,14 +167,14 @@ void flushBufferToServer() {
     jsonPayload += "]}";
   }
 
-  WiFiClient client;
+  WiFiClientSecure client;
+  client.setInsecure();
   http.begin(client, url);
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("User-Agent", "ESP32");
   http.addHeader("ngrok-skip-browser-warning", "true");
   int httpCode = http.POST(jsonPayload);
-  if (httpCode == 200 || httpCode == 201 || httpCode == 307) {
+  if (httpCode == 200 || httpCode == 201) {
     DEBUG_PORT.printf("✅ Flushed %d offline records to server (HTTP %d)\n", (int)telemetryBuffer.size(), httpCode);
     telemetryBuffer.clear();
   } else {
@@ -340,7 +337,7 @@ void loop() {
       float temp = myELM327.engineCoolantTemp();
       float maf = myELM327.mafRate();
 
-      if (isnan(volt) || volt < 0) volt = 0;
+      if (isnan(volt) || volt < 0 || volt > 30.0) volt = 0;
       if (isnan(rpm) || rpm < 0) rpm = 0;
       if (isnan(speed) || speed < 0) speed = 0;
       if (isnan(temp) || temp < 0) temp = 0;

@@ -14,7 +14,7 @@ const char* ssid = "Pajero";
 const char* password = "090384wifi";
 
 // --- Server Details ---
-const char* serverUrlBase = "http://chief-winston-express-times.trycloudflare.com/api/obd";
+const char* serverUrlBase = "https://chief-winston-express-times.trycloudflare.com/api/obd";
 
 // --- ELM327 Bluetooth Target ---
 const char* elmName = "OBDII";
@@ -82,12 +82,22 @@ struct LogEntry {
 
 std::vector<LogEntry> logQueue;
 
+WiFiClientSecure sharedSSLClient;
+static bool sslInsecureInitialized = false;
+
+void initSharedSSL() {
+  if (!sslInsecureInitialized) {
+    sharedSSLClient.setInsecure();
+    sslInsecureInitialized = true;
+  }
+}
+
 void flushLogsToServer() {
   if (logQueue.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
+  initSharedSSL();
   HTTPClient http;
-  WiFiClient client;
 
   String baseUrl = String(serverUrlBase);
   int idx = baseUrl.indexOf("/api/obd");
@@ -109,8 +119,7 @@ void flushLogsToServer() {
     }
     json += "}";
 
-    http.begin(client, url);
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.begin(sharedSSLClient, url);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", "ESP32");
     int code = http.POST(json);
@@ -140,8 +149,8 @@ void flushBufferToServer() {
   if (telemetryBuffer.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
+  initSharedSSL();
   HTTPClient http;
-  WiFiClient client;
   String url = String(serverUrlBase);
   if (telemetryBuffer.size() > 1) url += "/batch";
 
@@ -170,8 +179,7 @@ void flushBufferToServer() {
     jsonPayload += "]}";
   }
 
-  http.begin(client, url);
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.begin(sharedSSLClient, url);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("User-Agent", "ESP32");
   int httpCode = http.POST(jsonPayload);

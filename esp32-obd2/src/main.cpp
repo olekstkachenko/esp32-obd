@@ -308,8 +308,10 @@ void setup() {
 }
 
 void loop() {
-  // Always flush any queued system logs when WiFi is connected
-  if (WiFi.status() == WL_CONNECTED) {
+  // Throttle log flushing to once every 3 seconds to prevent RAM exhaustion
+  static unsigned long lastLogFlush = 0;
+  if (WiFi.status() == WL_CONNECTED && (millis() - lastLogFlush > 3000)) {
+    lastLogFlush = millis();
     flushLogsToServer();
   }
 

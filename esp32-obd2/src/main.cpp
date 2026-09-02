@@ -82,13 +82,22 @@ struct LogEntry {
 
 std::vector<LogEntry> logQueue;
 
+WiFiClientSecure sharedSSLClient;
+static bool sslInsecureInitialized = false;
+
+void initSharedSSL() {
+  if (!sslInsecureInitialized) {
+    sharedSSLClient.setInsecure();
+    sslInsecureInitialized = true;
+  }
+}
+
 void flushLogsToServer() {
   if (logQueue.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
+  initSharedSSL();
   HTTPClient http;
-  WiFiClientSecure client;
-  client.setInsecure();
 
   String baseUrl = String(serverUrlBase);
   int idx = baseUrl.indexOf("/api/obd");
@@ -110,7 +119,7 @@ void flushLogsToServer() {
     }
     json += "}";
 
-    http.begin(client, url);
+    http.begin(sharedSSLClient, url);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", "ESP32");
     http.addHeader("ngrok-skip-browser-warning", "true");
@@ -141,6 +150,7 @@ void flushBufferToServer() {
   if (telemetryBuffer.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
+  initSharedSSL();
   HTTPClient http;
   String url = String(serverUrlBase);
   if (telemetryBuffer.size() > 1) url += "/batch";
@@ -170,9 +180,7 @@ void flushBufferToServer() {
     jsonPayload += "]}";
   }
 
-  WiFiClientSecure client;
-  client.setInsecure();
-  http.begin(client, url);
+  http.begin(sharedSSLClient, url);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("User-Agent", "ESP32");
   http.addHeader("ngrok-skip-browser-warning", "true");

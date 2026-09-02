@@ -110,10 +110,11 @@ void flushLogsToServer() {
     json += "}";
 
     http.begin(client, url);
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", "ESP32");
     int code = http.POST(json);
-    DEBUG_PORT.printf("[sendLog HTTP] status: %d\n", code);
+    DEBUG_PORT.printf("[sendLog HTTP] status: %d (%s)\n", code, http.errorToString(code).c_str());
     http.end();
 
     if (code == 200 || code == 201) {
@@ -170,6 +171,7 @@ void flushBufferToServer() {
   }
 
   http.begin(client, url);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("User-Agent", "ESP32");
   int httpCode = http.POST(jsonPayload);
@@ -177,7 +179,7 @@ void flushBufferToServer() {
     DEBUG_PORT.printf("✅ Flushed %d offline records to server (HTTP %d)\n", (int)telemetryBuffer.size(), httpCode);
     telemetryBuffer.clear();
   } else {
-    DEBUG_PORT.printf("⚠️ Sync failed (HTTP %d). Buffer size: %d records\n", httpCode, (int)telemetryBuffer.size());
+    DEBUG_PORT.printf("⚠️ Sync failed (HTTP %d: %s). Buffer size: %d records\n", httpCode, http.errorToString(httpCode).c_str(), (int)telemetryBuffer.size());
   }
   http.end();
 }

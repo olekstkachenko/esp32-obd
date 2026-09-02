@@ -293,7 +293,7 @@ void ensureELMConnected() {
 
   if (elmConnected && !elmInitialized) {
     sendLog("⚙️ Bluetooth з'єднання є! Ініціалізуємо протокол ELM327 (AT-команди)...", "info", "connecting");
-    if (myELM327.begin(ELM_PORT, true, 3000)) {
+    if (myELM327.begin(ELM_PORT, false, 2000)) {
       sendLog("🚀 УСПІХ! Протокол ELM327 успішно ініціалізовано! Почався збір даних.", "success", "connected");
       elmInitialized = true;
     } else {
@@ -334,16 +334,23 @@ void loop() {
       float dt = (millis() - lastUpdate) / 1000.0;
       lastUpdate = millis();
 
+      float volt = myELM327.batteryVoltage();
       float rpm = myELM327.rpm();
       float speed = myELM327.kph();
       float temp = myELM327.engineCoolantTemp();
-      float volt = myELM327.batteryVoltage();
       float maf = myELM327.mafRate();
 
-      float fuel_rate = (maf > 0 && myELM327.nb_rx_state == ELM_SUCCESS) ? (maf * 3600.0 / 14.7 / 717.0) : 0;
+      if (isnan(volt) || volt < 0) volt = 0;
+      if (isnan(rpm) || rpm < 0) rpm = 0;
+      if (isnan(speed) || speed < 0) speed = 0;
+      if (isnan(temp) || temp < 0) temp = 0;
+      if (isnan(maf) || maf < 0) maf = 0;
 
-      if (myELM327.nb_rx_state == ELM_SUCCESS) {
-        DEBUG_PORT.printf("RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
+      float fuel_rate = (maf > 0) ? (maf * 3600.0 / 14.7 / 717.0) : 0;
+
+      // Always push telemetry if voltage > 0 or RPM > 0 or ELM_SUCCESS
+      if (volt > 0 || rpm > 0 || speed > 0 || myELM327.nb_rx_state == ELM_SUCCESS) {
+        DEBUG_PORT.printf("✅ DATA: RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
                           rpm, speed, temp, volt, fuel_rate, (int)telemetryBuffer.size());
         
         if (telemetryBuffer.size() >= MAX_BUFFER_SIZE) {
@@ -354,9 +361,6 @@ void loop() {
         if (WiFi.status() == WL_CONNECTED) {
           flushBufferToServer();
         }
-      } else if (myELM327.nb_rx_state != ELM_GETTING_MSG) {
-        DEBUG_PORT.print("ELM327 ERROR: ");
-        DEBUG_PORT.println(myELM327.nb_rx_state);
       }
     }
   }

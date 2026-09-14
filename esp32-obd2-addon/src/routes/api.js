@@ -159,7 +159,7 @@ router.get('/history', (req, res) => {
 // 5. Trips Archive API
 router.get('/trips', (req, res) => {
   db.get(`SELECT value FROM settings WHERE key = 'fuel_price'`, (err, row) => {
-    const fuelPrice = parseFloat(row ? row.value : '82.90') || 82.90;
+    const fuelPrice = parseFloat(row ? row.value : '58.50') || 58.50;
 
     const sql = `
       SELECT t.id, t.start_time, t.end_time, t.status,

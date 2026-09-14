@@ -1,7 +1,7 @@
 name: "ESP32 OBD2 Telemetry & WebApp"
 description: "Автономний сервер телеметрії авто для ESP32-OBD2: Live-графіки через Ingress, журнал поїздок, паливна аналітика та моніторинг цін на АЗС (WOG, UPG, OKKO, KLO, Ukrnafta)"
 slug: "esp32_obd2"
-version: "1.0.3"
+version: "1.0.4"
 arch:
   - aarch64
   - amd64
@@ -24,10 +24,8 @@ map:
 options:
   telegram_bot_token: ""
   webapp_url: ""
-  fuel_price: "82.90"
   port: 3000
 schema:
   telegram_bot_token: "str?"
   webapp_url: "str?"
-  fuel_price: "str?"
   port: "int"

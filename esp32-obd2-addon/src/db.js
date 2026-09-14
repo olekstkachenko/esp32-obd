@@ -70,7 +70,7 @@ function initDatabase() {
     )`);
 
     // Insert default fuel price if not exists
-    db.run(`INSERT OR IGNORE INTO settings (key, value) VALUES ('fuel_price', '82.90')`);
+    db.run(`INSERT OR IGNORE INTO settings (key, value) VALUES ('fuel_price', '58.50')`);
   });
 }
 

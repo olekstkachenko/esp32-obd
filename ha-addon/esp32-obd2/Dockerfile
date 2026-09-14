@@ -1,7 +1,7 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-nodejs:20
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM ${BUILD_FROM}
 
-# Install necessary system utilities & build tools
+# Install Node.js, NPM, SQLite, and essential build tools via Alpine package manager
 RUN apk add --no-cache \
     nodejs \
     npm \

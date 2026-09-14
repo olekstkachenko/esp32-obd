@@ -4,27 +4,27 @@ const db = require('../db');
 const tripService = require('../services/tripService');
 const fuelScraper = require('../services/fuelScraper');
 
-// Device Diagnostics In-Memory Buffer
-let deviceLogs = [];
-let latestDeviceStatus = {
+// In-Memory Ring Buffer for ESP32 Diagnostic Logs
+const MAX_LOGS = 100;
+const deviceLogs = [];
+const latestDeviceStatus = {
   wifi: 'unknown',
   bt: 'disconnected',
   last_seen: null
 };
 
-// Device Log Endpoint
+// 1. Device Diagnostics Endpoint
 router.post('/device/log', (req, res) => {
   const { message, level, bt_status, wifi_status } = req.body;
   const timestamp = new Date().toLocaleTimeString('uk-UA');
   
   if (message) {
-    const entry = { timestamp, level: level || 'info', message };
-    deviceLogs.push(entry);
-    if (deviceLogs.length > 100) deviceLogs.shift();
+    deviceLogs.push({ timestamp, level: level || 'info', message: String(message) });
+    if (deviceLogs.length > MAX_LOGS) deviceLogs.shift();
   }
 
-  if (bt_status) latestDeviceStatus.bt = bt_status;
-  if (wifi_status) latestDeviceStatus.wifi = wifi_status;
+  if (bt_status) latestDeviceStatus.bt = String(bt_status);
+  if (wifi_status) latestDeviceStatus.wifi = String(wifi_status);
   latestDeviceStatus.last_seen = new Date().toISOString();
 
   res.json({ success: true });
@@ -37,34 +37,35 @@ router.get('/device/status', (req, res) => {
   });
 });
 
-// 1. Post single OBD record from ESP32
+// 2. Single OBD Record Ingestion from ESP32
 router.post('/obd', async (req, res) => {
-  const { rpm, speed, temp, voltage, fuel_rate } = req.body;
+  const { rpm = 0, speed = 0, temp = 0, voltage = 0, fuel_rate = 0 } = req.body;
   const now = Date.now();
   
   try {
-      const tripId = await tripService.ensureActiveTrip();
-      const lastTime = tripService.getLastRecordTime();
-      const timeDiffSeconds = lastTime ? (now - lastTime) / 1000.0 : 0;
-      tripService.setLastRecordTime(now);
+    const tripId = await tripService.ensureActiveTrip();
+    const lastTime = tripService.getLastRecordTime();
+    const timeDiffSeconds = lastTime ? Math.min((now - lastTime) / 1000.0, 60) : 0;
+    tripService.setLastRecordTime(now);
 
-      db.run(`INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate) VALUES (?, ?, ?, ?, ?, ?)`, 
-          [tripId, rpm, speed, temp, voltage, fuel_rate], 
-          async function(err) {
-              if (err) return res.status(500).json({ error: err.message });
-              tripService.updateTripStats(tripId, speed || 0, fuel_rate || 0, timeDiffSeconds);
-              res.status(201).json({ success: true, tripId });
-      });
-  } catch(e) {
-      res.status(500).json({ error: e.message });
+    await db.runAsync(
+      `INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate) VALUES (?, ?, ?, ?, ?, ?)`,
+      [tripId, Number(rpm) || 0, Number(speed) || 0, Number(temp) || 0, Number(voltage) || 0, Number(fuel_rate) || 0]
+    );
+
+    await tripService.updateTripStats(tripId, Number(speed) || 0, Number(fuel_rate) || 0, timeDiffSeconds);
+    res.status(201).json({ success: true, tripId });
+  } catch (err) {
+    console.error('[API /obd] Error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 2. Post offline batch of OBD records from ESP32
+// 3. Batch OBD Records Ingestion (Offline Buffering Sync)
 router.post('/obd/batch', async (req, res) => {
   const { records } = req.body;
   if (!Array.isArray(records) || records.length === 0) {
-    return res.status(400).json({ error: 'Масив записів порожній' });
+    return res.status(400).json({ error: 'Records array is empty' });
   }
 
   try {
@@ -73,93 +74,105 @@ router.post('/obd/batch', async (req, res) => {
     let totalAddedFuel = 0;
     let batchMaxSpeed = 0;
 
-    db.serialize(() => {
-      db.run("BEGIN TRANSACTION");
-      const stmt = db.prepare(`INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate) VALUES (?, ?, ?, ?, ?, ?)`);
+    await new Promise((resolve, reject) => {
+      db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+        const stmt = db.prepare(`INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate) VALUES (?, ?, ?, ?, ?, ?)`);
 
-      records.forEach((r) => {
-        const rpm = r.rpm || 0;
-        const speed = r.speed || 0;
-        const temp = r.temp || 0;
-        const volt = r.voltage || r.volt || 0;
-        const fuel = r.fuel_rate || r.fuel || 0;
-        const dt = (r.dt && r.dt > 0 && r.dt <= 60) ? r.dt : 1.0;
+        for (const r of records) {
+          const rpm = Number(r.rpm) || 0;
+          const speed = Number(r.speed) || 0;
+          const temp = Number(r.temp) || 0;
+          const volt = Number(r.voltage || r.volt) || 0;
+          const fuel = Number(r.fuel_rate || r.fuel) || 0;
+          const dt = (r.dt && r.dt > 0 && r.dt <= 60) ? Number(r.dt) : 1.0;
 
-        if (speed > batchMaxSpeed) batchMaxSpeed = speed;
+          if (speed > batchMaxSpeed) batchMaxSpeed = speed;
 
-        const dist = (speed > 0) ? (speed * (dt / 3600.0)) : 0;
-        totalAddedDist += dist;
+          const dist = (speed > 0) ? (speed * (dt / 3600.0)) : 0;
+          totalAddedDist += dist;
 
-        if (fuel > 0) {
-          totalAddedFuel += fuel * (dt / 3600.0);
-        } else if (dist > 0) {
-          totalAddedFuel += (dist * 7.5) / 100.0;
+          if (fuel > 0) {
+            totalAddedFuel += fuel * (dt / 3600.0);
+          } else if (dist > 0) {
+            totalAddedFuel += (dist * 7.5) / 100.0;
+          }
+
+          stmt.run(tripId, rpm, speed, temp, volt, fuel);
         }
 
-        stmt.run(tripId, rpm, speed, temp, volt, fuel);
+        stmt.finalize();
+
+        db.run(
+          `UPDATE trips SET 
+            distance_km = distance_km + ?, 
+            fuel_liters = fuel_liters + ?,
+            avg_speed = (SELECT COALESCE(AVG(speed), 0) FROM obd_records WHERE trip_id = ? AND speed > 0),
+            max_speed = MAX(COALESCE(max_speed, 0), ?)
+          WHERE id = ?`,
+          [totalAddedDist, totalAddedFuel, tripId, batchMaxSpeed, tripId],
+          (err) => {
+            if (err) {
+              db.run('ROLLBACK');
+              return reject(err);
+            }
+            db.run('COMMIT');
+            resolve();
+          }
+        );
       });
-
-      stmt.finalize();
-
-      db.run(`UPDATE trips SET 
-              distance_km = distance_km + ?, 
-              fuel_liters = fuel_liters + ?,
-              avg_speed = (SELECT AVG(speed) FROM obd_records WHERE trip_id = ? AND speed > 0),
-              max_speed = MAX(COALESCE(max_speed, 0), ?)
-              WHERE id = ?`, 
-              [totalAddedDist, totalAddedFuel, tripId, batchMaxSpeed, tripId], 
-              (err) => {
-                if (err) {
-                  db.run("ROLLBACK");
-                  return res.status(500).json({ error: err.message });
-                }
-                db.run("COMMIT");
-                console.log(`[Batch Sync] Processed ${records.length} offline records for Trip #${tripId}`);
-                res.status(201).json({ success: true, count: records.length, tripId });
-              });
     });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
+
+    console.log(`[Batch Sync] Processed ${records.length} records for Trip #${tripId} (+${totalAddedDist.toFixed(2)} km)`);
+    res.status(201).json({ success: true, count: records.length, tripId });
+  } catch (err) {
+    console.error('[API /obd/batch] Error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 3. Get latest dashboard data
-router.get('/data', (req, res) => {
-  const activeId = tripService.getCurrentTripId();
-
-  db.get(`SELECT * FROM obd_records ORDER BY id DESC LIMIT 1`, (err, latestRecord) => {
-    if (err) return res.status(500).json({ error: err.message });
-
-    if (!activeId) {
-      return res.json({
-        latest: latestRecord || { rpm: 0, speed: 0, temp: 0, voltage: 0, fuel_rate: 0 },
-        trip: { distance_km: 0, avg_speed: 0, max_speed: 0 }
-      });
+// 4. Latest Telemetry & Active Trip Stats
+router.get('/data', async (req, res) => {
+  try {
+    const activeId = tripService.getCurrentTripId();
+    const latestRecord = await db.getAsync(`SELECT * FROM obd_records ORDER BY id DESC LIMIT 1`);
+    
+    let tripStats = { distance_km: 0, avg_speed: 0, max_speed: 0 };
+    if (activeId) {
+      const row = await db.getAsync(`SELECT distance_km, avg_speed, max_speed FROM trips WHERE id = ?`, [activeId]);
+      if (row) tripStats = row;
     }
 
-    db.get(`SELECT distance_km, avg_speed, max_speed FROM trips WHERE id = ?`, [activeId], (err, tripStats) => {
-      if (err) return res.status(500).json({ error: err.message });
-
-      res.json({
-        latest: latestRecord || { rpm: 0, speed: 0, temp: 0, voltage: 0, fuel_rate: 0 },
-        trip: tripStats || { distance_km: 0, avg_speed: 0, max_speed: 0 }
-      });
+    res.json({
+      latest: latestRecord || { rpm: 0, speed: 0, temp: 0, voltage: 0, fuel_rate: 0 },
+      trip: tripStats
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 4. Get last 60 records for live chart
-router.get('/history', (req, res) => {
-  db.all(`SELECT * FROM (SELECT * FROM obd_records ORDER BY id DESC LIMIT 60) ORDER BY id ASC`, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+// 5. Last 60 Telemetry Records for Live Charts
+router.get('/history', async (req, res) => {
+  try {
+    const rows = await db.allAsync(`
+      SELECT * FROM (
+        SELECT id, rpm, speed, temp, voltage, fuel_rate, timestamp 
+        FROM obd_records 
+        ORDER BY id DESC LIMIT 60
+      ) ORDER BY id ASC
+    `);
     res.json(rows || []);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 5. Trips Archive API
-router.get('/trips', (req, res) => {
-  db.get(`SELECT value FROM settings WHERE key = 'fuel_price'`, (err, row) => {
-    const fuelPrice = parseFloat(row ? row.value : '58.50') || 58.50;
+// 6. Trips Archive with Fuel Cost Calculations
+router.get('/trips', async (req, res) => {
+  try {
+    const settingRow = await db.getAsync(`SELECT value FROM settings WHERE key = 'fuel_price'`);
+    const fuelPrice = parseFloat(settingRow ? settingRow.value : '58.50') || 58.50;
 
     const sql = `
       SELECT t.id, t.start_time, t.end_time, t.status,
@@ -176,97 +189,121 @@ router.get('/trips', (req, res) => {
       ORDER BY t.id DESC
     `;
 
-    db.all(sql, [], (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
+    const rows = await db.allAsync(sql);
+    const trips = rows.map((r) => {
+      const dist = r.distance_km || 0;
+      const fuel = r.fuel_liters || 0;
+      const l_per_100km = dist > 0 ? (fuel / dist) * 100 : 0;
+      const trip_cost_uah = fuel * fuelPrice;
 
-      const trips = (rows || []).map(r => {
-        const dist = r.distance_km || 0;
-        const fuel = r.fuel_liters || 0;
-        const l_per_100km = dist > 0 ? (fuel / dist) * 100 : 0;
-        const trip_cost_uah = fuel * fuelPrice;
-
-        return {
-          ...r,
-          l_per_100km: parseFloat(l_per_100km.toFixed(1)),
-          trip_cost_uah: parseFloat(trip_cost_uah.toFixed(2))
-        };
-      });
-
-      res.json(trips);
+      return {
+        ...r,
+        l_per_100km: parseFloat(l_per_100km.toFixed(1)),
+        trip_cost_uah: parseFloat(trip_cost_uah.toFixed(2))
+      };
     });
-  });
-});
 
-// 6. Get trip details
-router.get('/trips/:id', (req, res) => {
-  const tripId = req.params.id;
-  db.get(`SELECT * FROM trips WHERE id = ?`, [tripId], (err, trip) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!trip) return res.status(404).json({ error: 'Поїздку не знайдено' });
-
-    db.all(`SELECT * FROM obd_records WHERE trip_id = ? ORDER BY id ASC`, [tripId], (err, records) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ trip, records: records || [] });
-    });
-  });
-});
-
-// 7. Delete trip
-router.delete('/trips/:id', (req, res) => {
-  const tripId = req.params.id;
-  db.run(`DELETE FROM trips WHERE id = ?`, [tripId], (err) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ success: true, deletedId: tripId });
-  });
-});
-
-// 8. Finish active trip
-router.post('/trips/finish', async (req, res) => {
-  try {
-    const finishedId = await tripService.finishCurrentTrip();
-    res.json({ success: true, finishedTripId: finishedId });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.json(trips);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 9. Fuel Prices API
-router.get('/fuel-prices', (req, res) => {
-  db.all(`SELECT station, price, fuel_type, updated_at FROM fuel_prices ORDER BY price ASC`, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+// 7. Trip Details Modal Data
+router.get('/trips/:id', async (req, res) => {
+  const tripId = parseInt(req.params.id, 10);
+  if (isNaN(tripId)) return res.status(400).json({ error: 'Invalid trip ID' });
+
+  try {
+    const settingRow = await db.getAsync(`SELECT value FROM settings WHERE key = 'fuel_price'`);
+    const fuelPrice = parseFloat(settingRow ? settingRow.value : '58.50') || 58.50;
+
+    const trip = await db.getAsync(`SELECT * FROM trips WHERE id = ?`, [tripId]);
+    if (!trip) return res.status(404).json({ error: 'Trip not found' });
+
+    const records = await db.allAsync(`SELECT timestamp, speed, rpm, temp, voltage FROM obd_records WHERE trip_id = ? ORDER BY id ASC`, [tripId]);
+
+    const dist = trip.distance_km || 0;
+    const fuel = trip.fuel_liters || 0;
+    trip.l_per_100km = dist > 0 ? parseFloat(((fuel / dist) * 100).toFixed(1)) : 0;
+    trip.trip_cost_uah = parseFloat((fuel * fuelPrice).toFixed(2));
+
+    res.json({ trip, records });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 8. Delete Trip
+router.delete('/trips/:id', async (req, res) => {
+  const tripId = parseInt(req.params.id, 10);
+  if (isNaN(tripId)) return res.status(400).json({ error: 'Invalid trip ID' });
+
+  try {
+    await db.runAsync(`DELETE FROM trips WHERE id = ?`, [tripId]);
+    res.json({ success: true, message: `Trip #${tripId} deleted` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 9. Finish Active Trip Manually
+router.post('/trips/finish', async (req, res) => {
+  try {
+    const finishedId = await tripService.finishCurrentTrip();
+    res.json({ success: true, finishedId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 10. Gas Stations Fuel Prices
+router.get('/fuel-prices', async (req, res) => {
+  try {
+    const rows = await db.allAsync(`SELECT station, price, fuel_type, updated_at FROM fuel_prices ORDER BY price ASC`);
     res.json(rows || []);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.post('/fuel-prices/refresh', async (req, res) => {
   try {
     const prices = await fuelScraper.fetchGasStationPrices();
     res.json({ success: true, prices });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 10. Settings API (fuel price)
-router.get('/settings', (req, res) => {
-  db.all(`SELECT key, value FROM settings`, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+// 11. Custom Settings
+router.get('/settings', async (req, res) => {
+  try {
+    const rows = await db.allAsync(`SELECT key, value FROM settings`);
     const settings = {};
-    (rows || []).forEach(r => settings[r.key] = r.value);
+    (rows || []).forEach(r => { settings[r.key] = r.value; });
     res.json(settings);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-router.post('/settings', (req, res) => {
+router.post('/settings', async (req, res) => {
   const { fuel_price } = req.body;
-  if (!fuel_price) return res.status(400).json({ error: 'Вкажіть fuel_price' });
+  if (!fuel_price || isNaN(parseFloat(fuel_price))) {
+    return res.status(400).json({ error: 'Invalid fuel price' });
+  }
 
-  db.run(`INSERT INTO settings (key, value, updated_at) VALUES ('fuel_price', ?, CURRENT_TIMESTAMP)
-          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
-          [String(fuel_price)], (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true, fuel_price });
-          });
+  try {
+    await db.runAsync(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('fuel_price', ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+      [String(fuel_price)]
+    );
+    res.json({ success: true, fuel_price });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

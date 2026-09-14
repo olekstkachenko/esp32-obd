@@ -243,6 +243,22 @@
         let modalSpeedChartInstance = null;
         let modalRpmChartInstance = null;
 
+        function startLiveTimers() {
+            if (!liveTimer1) {
+                fetchLatest();
+                liveTimer1 = setInterval(fetchLatest, 2000);
+            }
+            if (!liveTimer2) {
+                fetchHistory();
+                liveTimer2 = setInterval(fetchHistory, 5000);
+            }
+        }
+
+        function stopLiveTimers() {
+            if (liveTimer1) { clearInterval(liveTimer1); liveTimer1 = null; }
+            if (liveTimer2) { clearInterval(liveTimer2); liveTimer2 = null; }
+        }
+
         function switchTab(tab) {
             currentTab = tab;
             document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
@@ -253,10 +269,15 @@
             document.getElementById('viewTrips').style.display = tab === 'trips' ? 'flex' : 'none';
             document.getElementById('viewGas').style.display = tab === 'gas' ? 'flex' : 'none';
 
-            if (tab === 'trips') {
-                loadTrips();
-            } else if (tab === 'gas') {
-                loadGasStations();
+            if (tab === 'live') {
+                startLiveTimers();
+            } else {
+                stopLiveTimers();
+                if (tab === 'trips') {
+                    loadTrips();
+                } else if (tab === 'gas') {
+                    loadGasStations();
+                }
             }
         }
 

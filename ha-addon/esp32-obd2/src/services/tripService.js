@@ -15,43 +15,39 @@ function setLastRecordTime(time) {
   lastRecordTime = time;
 }
 
-// Ensures an active trip exists. Auto-expires inactive trips older than 30 mins.
-function ensureActiveTrip() {
-  return new Promise((resolve, reject) => {
-    const now = Date.now();
-    const timeoutMs = 30 * 60 * 1000; // 30 minutes
+// Ensures an active trip exists. Auto-expires idle trips older than 30 mins.
+async function ensureActiveTrip() {
+  const now = Date.now();
+  const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
-    if (currentTripId && lastRecordTime && (now - lastRecordTime > timeoutMs)) {
-      console.log(`[TripService] Auto-completing idle Trip #${currentTripId}`);
-      db.run(`UPDATE trips SET status = 'completed', end_time = CURRENT_TIMESTAMP WHERE id = ?`, [currentTripId]);
-      currentTripId = null;
-    }
+  // Auto-complete idle trips
+  if (currentTripId && lastRecordTime && (now - lastRecordTime > TIMEOUT_MS)) {
+    console.log(`[TripService] Auto-completing idle Trip #${currentTripId}`);
+    await db.runAsync(`UPDATE trips SET status = 'completed', end_time = CURRENT_TIMESTAMP WHERE id = ?`, [currentTripId]);
+    currentTripId = null;
+  }
 
-    if (currentTripId) {
-      return resolve(currentTripId);
-    }
+  if (currentTripId) {
+    return currentTripId;
+  }
 
-    db.get(`SELECT id FROM trips WHERE status = 'active' ORDER BY id DESC LIMIT 1`, (err, row) => {
-      if (err) return reject(err);
+  // Look for any existing active trip
+  const row = await db.getAsync(`SELECT id FROM trips WHERE status = 'active' ORDER BY id DESC LIMIT 1`);
+  if (row) {
+    currentTripId = row.id;
+    lastRecordTime = now;
+    return currentTripId;
+  }
 
-      if (row) {
-        currentTripId = row.id;
-        lastRecordTime = now;
-        return resolve(currentTripId);
-      }
-
-      db.run(`INSERT INTO trips (status, max_speed, fuel_liters) VALUES ('active', 0, 0)`, function(err) {
-        if (err) return reject(err);
-        currentTripId = this.lastID;
-        lastRecordTime = now;
-        console.log(`[TripService] Created new active Trip #${currentTripId}`);
-        resolve(currentTripId);
-      });
-    });
-  });
+  // Create a new active trip
+  const result = await db.runAsync(`INSERT INTO trips (status, max_speed, fuel_liters) VALUES ('active', 0, 0)`);
+  currentTripId = result.lastID;
+  lastRecordTime = now;
+  console.log(`[TripService] Created new active Trip #${currentTripId}`);
+  return currentTripId;
 }
 
-function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
+async function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
   if (timeDiffSeconds <= 0 || timeDiffSeconds > 60) return;
   const distanceKm = (speedKmh > 0) ? (speedKmh * (timeDiffSeconds / 3600.0)) : 0;
   
@@ -62,30 +58,26 @@ function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
     addedFuel = (distanceKm * 7.5) / 100.0;
   }
 
-  db.run(`UPDATE trips SET 
-          distance_km = distance_km + ?, 
-          fuel_liters = fuel_liters + ?,
-          avg_speed = (SELECT AVG(speed) FROM obd_records WHERE trip_id = ? AND speed > 0),
-          max_speed = MAX(COALESCE(max_speed, 0), ?)
-          WHERE id = ?`, 
-          [distanceKm, addedFuel, tripId, speedKmh, tripId]);
+  await db.runAsync(`
+    UPDATE trips SET 
+      distance_km = distance_km + ?, 
+      fuel_liters = fuel_liters + ?,
+      avg_speed = (SELECT COALESCE(AVG(speed), 0) FROM obd_records WHERE trip_id = ? AND speed > 0),
+      max_speed = MAX(COALESCE(max_speed, 0), ?)
+    WHERE id = ?`, 
+    [distanceKm, addedFuel, tripId, speedKmh, tripId]
+  );
 }
 
-function finishCurrentTrip() {
-  return new Promise((resolve, reject) => {
-    if (currentTripId) {
-      const finishedId = currentTripId;
-      db.run(`UPDATE trips SET status = 'completed', end_time = CURRENT_TIMESTAMP WHERE id = ?`, [finishedId], (err) => {
-        if (err) return reject(err);
-        currentTripId = null;
-        lastRecordTime = null;
-        console.log(`[TripService] Manually finished Trip #${finishedId}`);
-        resolve(finishedId);
-      });
-    } else {
-      resolve(null);
-    }
-  });
+async function finishCurrentTrip() {
+  if (!currentTripId) return null;
+  
+  const finishedId = currentTripId;
+  await db.runAsync(`UPDATE trips SET status = 'completed', end_time = CURRENT_TIMESTAMP WHERE id = ?`, [finishedId]);
+  currentTripId = null;
+  lastRecordTime = null;
+  console.log(`[TripService] Manually finished Trip #${finishedId}`);
+  return finishedId;
 }
 
 module.exports = {

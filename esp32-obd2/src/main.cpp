@@ -156,6 +156,7 @@ void flushBufferToServer() {
 
   String jsonPayload;
   if (telemetryBuffer.size() == 1) {
+    jsonPayload.reserve(128);
     const auto& r = telemetryBuffer[0];
     jsonPayload = "{";
     jsonPayload += "\"rpm\":" + String(r.rpm, 1) + ",";
@@ -165,6 +166,7 @@ void flushBufferToServer() {
     jsonPayload += "\"fuel_rate\":" + String(r.fuel, 1);
     jsonPayload += "}";
   } else {
+    jsonPayload.reserve(telemetryBuffer.size() * 85 + 32);
     jsonPayload = "{\"records\":[";
     for (size_t i = 0; i < telemetryBuffer.size(); i++) {
       const auto& r = telemetryBuffer[i];
@@ -296,6 +298,11 @@ void ensureELMConnected() {
 
 void setup() {
   DEBUG_PORT.begin(115200);
+
+  // Pre-allocate vector capacity to avoid heap fragmentation
+  telemetryBuffer.reserve(MAX_BUFFER_SIZE);
+  logQueue.reserve(64);
+
   startWiFi();
 
   sendLog("🚀 ESP32 завантажено! Запуск Bluetooth Master...", "info");

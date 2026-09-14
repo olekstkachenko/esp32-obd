@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OBD2 Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header class="glass-header">
+            <h1>Telematics Pro</h1>
+            <div class="status-indicator">
+                <div class="dot pulse"></div> Live
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="nav-tabs">
+            <button class="nav-tab active" id="tabLiveBtn" onclick="switchTab('live')">
+                <span>📊</span> Live
+            </button>
+            <button class="nav-tab" id="tabTripsBtn" onclick="switchTab('trips')">
+                <span>📜</span> Архів
+            </button>
+            <button class="nav-tab" id="tabGasBtn" onclick="switchTab('gas')">
+                <span>⛽</span> Ціни АЗС
+            </button>
+        </nav>
+
+        <!-- Fuel Price Setting Widget -->
+        <div class="fuel-price-bar">
+            <div class="fuel-price-info">
+                <span>⛽</span>
+                <span>Ціна бензину <b>А-95</b>:</span>
+            </div>
+            <div class="fuel-price-input-wrapper">
+                <input type="number" step="0.1" id="globalFuelPriceInput" class="fuel-price-input" value="82.90" onchange="saveFuelPrice()">
+                <span style="font-weight:600; color:var(--text-secondary);">грн/л</span>
+                <button class="btn-sm btn-primary" onclick="saveFuelPrice()" style="padding:6px 10px;">💾</button>
+            </div>
+        </div>
+
+        <!-- ================= LIVE VIEW ================= -->
+        <div id="viewLive" style="display: flex; flex-direction: column; gap: 24px;">
+            <!-- Trip Summary -->
+            <section class="trip-summary glass-panel">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="trip-header">Поточна поїздка</div>
+                    <button class="btn-sm btn-finish" onclick="finishTrip()">🏁 Завершити сесію</button>
+                </div>
+                <div class="trip-metrics">
+                    <div class="metric-mini">
+                        <span class="label">Дистанція</span>
+                        <span class="value"><span id="tripDist">0.0</span> km</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">Сер. швидкість</span>
+                        <span class="value"><span id="tripAvgSpeed">0</span> km/h</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">Макс. швидкість</span>
+                        <span class="value"><span id="tripMaxSpeed">0</span> km/h</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Live Diagnostic & ESP32 Log Console -->
+            <div class="glass-panel" style="margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 6px; color: #fff;">
+                        <span>🛠️</span> Діагностика & Логи ESP32
+                    </span>
+                    <span id="espStatusBadge" class="trip-badge badge-active" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa;">Очікування логів...</span>
+                </div>
+                
+                <div id="espLogsConsole" style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px; font-family: monospace; font-size: 0.75rem; height: 130px; overflow-y: auto; color: #38bdf8;">
+                    <div style="color: var(--text-secondary);">⏳ Очікування підключення ESP32...</div>
+                </div>
+            </div>
+
+            <!-- Live Metrics Grid -->
+            <main>
+                <div class="metrics-grid">
+                    <div class="metric-card glass-panel highlight-blue">
+                        <div class="metric-title">Speed</div>
+                        <div class="metric-value"><span id="currentSpeed">--</span><span class="unit">km/h</span></div>
+                    </div>
+                    <div class="metric-card glass-panel highlight-red">
+                        <div class="metric-title">Engine</div>
+                        <div class="metric-value"><span id="currentRpm">--</span><span class="unit">RPM</span></div>
+                    </div>
+                    <div class="metric-card glass-panel">
+                        <div class="metric-title">Coolant Temp</div>
+                        <div class="metric-value"><span id="currentTemp">--</span><span class="unit">°C</span></div>
+                    </div>
+                    <div class="metric-card glass-panel">
+                        <div class="metric-title">Battery</div>
+                        <div class="metric-value"><span id="currentVolt">--</span><span class="unit">V</span></div>
+                    </div>
+                    <div class="metric-card glass-panel">
+                        <div class="metric-title">Fuel Rate</div>
+                        <div class="metric-value"><span id="currentFuel">--</span><span class="unit">L/h</span></div>
+                    </div>
+                </div>
+
+                <div class="chart-container glass-panel" style="margin-top: 20px;">
+                    <canvas id="speedChart"></canvas>
+                </div>
+                
+                <div class="chart-container glass-panel" style="margin-top: 20px;">
+                    <canvas id="rpmChart"></canvas>
+                </div>
+            </main>
+        </div>
+
+        <!-- ================= TRIPS ARCHIVE VIEW ================= -->
+        <div id="viewTrips" style="display: none; flex-direction: column; gap: 20px;">
+            <div class="trips-header-bar">
+                <div class="trip-header" style="font-size: 1.1rem; color: #fff;">Історія всіх поїздок</div>
+                <button class="btn-sm btn-primary" onclick="loadTrips()">🔄 Оновити</button>
+            </div>
+            
+            <div id="tripsList" class="trips-container">
+                <!-- Trip cards inserted dynamically -->
+            </div>
+        </div>
+
+        <!-- ================= GAS STATIONS VIEW ================= -->
+        <div id="viewGas" style="display: none; flex-direction: column; gap: 20px;">
+            <div class="trips-header-bar">
+                <div>
+                    <div class="trip-header" style="font-size: 1.1rem; color: #fff;">Ціни на бензин А-95 (звичайний)</div>
+                    <div id="fuelLastUpdated" style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">Оновлюється кілька разів на день</div>
+                </div>
+                <button class="btn-sm btn-primary" id="btnRefreshGas" onclick="refreshGasStations()">🔄 Оновити зараз</button>
+            </div>
+
+            <div id="gasStationsList" class="gas-stations-grid">
+                <!-- Gas station cards inserted dynamically -->
+            </div>
+        </div>
+
+        <!-- ================= MODAL: TRIP DETAILS ================= -->
+        <div id="tripModal" class="modal-overlay" style="display: none;">
+            <div class="modal-content glass-panel">
+                <div class="modal-header">
+                    <div>
+                        <h2 id="modalTripTitle" style="font-size: 1.25rem; font-weight: 600;">Деталі поїздки</h2>
+                        <div id="modalTripSub" style="font-size: 0.85rem; color: var(--text-secondary);"></div>
+                    </div>
+                    <button class="close-btn" onclick="closeTripModal()">✕</button>
+                </div>
+
+                <div class="trip-card-grid" style="background: rgba(15, 23, 42, 0.6); grid-template-columns: repeat(3, 1fr);">
+                    <div class="trip-stat-item">
+                        <span class="trip-stat-label">Дистанція</span>
+                        <span id="modalTripDist" class="trip-stat-val">-- km</span>
+                    </div>
+                    <div class="trip-stat-item">
+                        <span class="trip-stat-label">Тривалість</span>
+                        <span id="modalTripDuration" class="trip-stat-val">--</span>
+                    </div>
+                    <div class="trip-stat-item">
+                        <span class="trip-stat-label">Сер. швидкість</span>
+                        <span id="modalTripAvg" class="trip-stat-val">-- km/h</span>
+                    </div>
+                    <div class="trip-stat-item">
+                        <span class="trip-stat-label">Макс. швидкість</span>
+                        <span id="modalTripMax" class="trip-stat-val">-- km/h</span>
+                    </div>
+                    <div class="trip-stat-item">
+                        <span class="trip-stat-label">Витрата пального</span>
+                        <span id="modalTripFuel" class="trip-stat-val">-- л</span>
+                    </div>
+                    <div class="trip-stat-item">
+                        <span class="trip-stat-label">Вартість</span>
+                        <span id="modalTripCost" class="trip-stat-val cost-tag">-- ₴</span>
+                    </div>
+                </div>
+
+                <div class="chart-container" style="height: 220px;">
+                    <canvas id="modalSpeedChart"></canvas>
+                </div>
+
+                <div class="chart-container" style="height: 220px;">
+                    <canvas id="modalRpmChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram?.WebApp;
+        if (tg) {
+            tg.expand();
+            tg.ready();
+        }
+
+        // Home Assistant Ingress & Standalone URL Resolver
+        function apiUrl(path) {
+            const clean = path.startsWith('/') ? path.slice(1) : path;
+            const pathname = window.location.pathname;
+            const base = pathname.endsWith('/') ? pathname : pathname.substring(0, pathname.lastIndexOf('/') + 1);
+            return base + clean;
+        }
+
+        let currentTab = 'live';
+        let liveTimer1 = null;
+        let liveTimer2 = null;
+
+        Chart.defaults.color = 'rgba(255, 255, 255, 0.7)';
+        Chart.defaults.font.family = "'Outfit', sans-serif";
+        const commonOptions = {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { display: false },
+                y: { grid: { color: 'rgba(255, 255, 255, 0.1)' }, beginAtZero: true }
+            },
+            elements: { point: { radius: 0 } }
+        };
+
+        // Live Charts
+        const ctxSpeed = document.getElementById('speedChart').getContext('2d');
+        const speedChart = new Chart(ctxSpeed, {
+            type: 'line',
+            data: { labels: [], datasets: [{ data: [], borderColor: '#36a2eb', borderWidth: 2, tension: 0.4, fill: true, backgroundColor: 'rgba(54, 162, 235, 0.1)' }] },
+            options: { ...commonOptions, plugins: { title: { display: true, text: 'Швидкість (Live Timeline)', color: '#fff' } } }
+        });
+
+        const ctxRpm = document.getElementById('rpmChart').getContext('2d');
+        const rpmChart = new Chart(ctxRpm, {
+            type: 'line',
+            data: { labels: [], datasets: [{ data: [], borderColor: '#ff6384', borderWidth: 2, tension: 0.4, fill: true, backgroundColor: 'rgba(255, 99, 132, 0.1)' }] },
+            options: { ...commonOptions, plugins: { title: { display: true, text: 'Оберти двигуна RPM (Live Timeline)', color: '#fff' } } }
+        });
+
+        // Modal Charts
+        let modalSpeedChartInstance = null;
+        let modalRpmChartInstance = null;
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
+            document.getElementById('tabTripsBtn').classList.toggle('active', tab === 'trips');
+            document.getElementById('tabGasBtn').classList.toggle('active', tab === 'gas');
+            
+            document.getElementById('viewLive').style.display = tab === 'live' ? 'flex' : 'none';
+            document.getElementById('viewTrips').style.display = tab === 'trips' ? 'flex' : 'none';
+            document.getElementById('viewGas').style.display = tab === 'gas' ? 'flex' : 'none';
+
+            if (tab === 'trips') {
+                loadTrips();
+            } else if (tab === 'gas') {
+                loadGasStations();
+            }
+        }
+
+        // Settings (Fuel Price)
+        async function loadSettings() {
+            try {
+                const res = await fetch(apiUrl('api/settings'));
+                const data = await res.json();
+                if (data.fuel_price) {
+                    document.getElementById('globalFuelPriceInput').value = Number(data.fuel_price).toFixed(2);
+                }
+            } catch (err) {}
+        }
+
+        async function saveFuelPrice(val) {
+            const inputVal = val !== undefined ? val : parseFloat(document.getElementById('globalFuelPriceInput').value);
+            if (isNaN(inputVal) || inputVal <= 0) return;
+
+            document.getElementById('globalFuelPriceInput').value = Number(inputVal).toFixed(2);
+            try {
+                await fetch(apiUrl('api/settings'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fuel_price: inputVal })
+                });
+                if (currentTab === 'trips') loadTrips();
+            } catch (err) {}
+        }
+
+        async function fetchLatest() {
+            if (currentTab !== 'live') return;
+            try {
+                const res = await fetch(apiUrl('api/data'));
+                const data = await res.json();
+                
+                document.getElementById('tripDist').innerText = Number(data.trip.distance_km || 0).toFixed(1);
+                document.getElementById('tripAvgSpeed').innerText = Math.round(data.trip.avg_speed || 0);
+                document.getElementById('tripMaxSpeed').innerText = Math.round(data.trip.max_speed || 0);
+                
+                document.getElementById('currentSpeed').innerText = Math.round(data.latest.speed || 0);
+                document.getElementById('currentRpm').innerText = Math.round(data.latest.rpm || 0);
+                document.getElementById('currentTemp').innerText = Math.round(data.latest.temp || 0);
+                document.getElementById('currentVolt').innerText = Number(data.latest.voltage || 0).toFixed(1);
+                document.getElementById('currentFuel').innerText = Number(data.latest.fuel_rate || 0).toFixed(1);
+            } catch (err) {}
+        }
+
+        async function fetchHistory() {
+            if (currentTab !== 'live') return;
+            try {
+                const res = await fetch(apiUrl('api/history'));
+                const data = await res.json();
+                const labels = data.map(d => d.timestamp);
+                speedChart.data.labels = labels;
+                speedChart.data.datasets[0].data = data.map(d => d.speed);
+                speedChart.update();
+
+                rpmChart.data.labels = labels;
+                rpmChart.data.datasets[0].data = data.map(d => d.rpm);
+                rpmChart.update();
+            } catch (err) {}
+        }
+
+        function formatDuration(seconds) {
+            if (!seconds || seconds <= 0) return '0 хв';
+            const m = Math.floor(seconds / 60);
+            const h = Math.floor(m / 60);
+            if (h > 0) return `${h} год ${m % 60} хв`;
+            return `${Math.max(1, m)} хв`;
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return 'Нещодавно';
+            const d = new Date(dateStr.replace(' ', 'T') + 'Z');
+            return d.toLocaleDateString('uk-UA', { 
+                day: 'numeric', 
+                month: 'short', 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+        }
+
+        async function loadTrips() {
+            const listEl = document.getElementById('tripsList');
+            listEl.innerHTML = '<div class="empty-state">⏳ Завантаження архіву...</div>';
+            
+            try {
+                const res = await fetch(apiUrl('api/trips'));
+                const trips = await res.json();
+
+
+                if (!trips || trips.length === 0) {
+                    listEl.innerHTML = `
+                        <div class="glass-panel empty-state">
+                            <div class="icon">🚗</div>
+                            <h3>Поки що немає збережених поїздок</h3>
+                            <p style="margin-top: 8px;">Коли ESP32 передасть дані під час руху, вони з'являться тут.</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                listEl.innerHTML = trips.map(t => {
+                    const isActive = t.status === 'active';
+                    const durationText = formatDuration(t.duration_seconds);
+                    const dateText = formatDate(t.start_time);
+
+                    return `
+                        <div class="glass-panel trip-card">
+                            <div class="trip-card-header">
+                                <div class="trip-date">🗓️ ${dateText}</div>
+                                <span class="trip-badge ${isActive ? 'badge-active' : 'badge-completed'}">
+                                    ${isActive ? '● В процесі' : 'Завершена'}
+                                </span>
+                            </div>
+
+                            <div class="trip-card-grid" style="grid-template-columns: repeat(3, 1fr);">
+                                <div class="trip-stat-item">
+                                    <span class="trip-stat-label">Дистанція</span>
+                                    <span class="trip-stat-val">${t.distance_km} <span style="font-size:0.75rem;font-weight:400;">km</span></span>
+                                </div>
+                                <div class="trip-stat-item">
+                                    <span class="trip-stat-label">Тривалість</span>
+                                    <span class="trip-stat-val">${durationText}</span>
+                                </div>
+                                <div class="trip-stat-item">
+                                    <span class="trip-stat-label">Сер. швидкість</span>
+                                    <span class="trip-stat-val">${t.avg_speed} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
+                                </div>
+                                <div class="trip-stat-item">
+                                    <span class="trip-stat-label">Макс. швидкість</span>
+                                    <span class="trip-stat-val">${t.max_speed} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
+                                </div>
+                                <div class="trip-stat-item">
+                                    <span class="trip-stat-label">Витрата</span>
+                                    <span class="trip-stat-val">${t.fuel_liters || 0} л <span style="font-size:0.72rem;color:var(--text-secondary);">(${t.l_per_100km || 0}/100)</span></span>
+                                </div>
+                                <div class="trip-stat-item">
+                                    <span class="trip-stat-label">Вартість</span>
+                                    <span class="trip-stat-val cost-tag">${t.trip_cost_uah || 0} ₴</span>
+                                </div>
+                            </div>
+
+                            <div class="trip-card-actions">
+                                <button class="btn-sm btn-primary" onclick="openTripDetails(${t.id})">📈 Графіки поїздки</button>
+                                <button class="btn-sm btn-danger" onclick="deleteTrip(${t.id})">🗑️</button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                listEl.innerHTML = '<div class="empty-state" style="color:#ef4444;">Помилка завантаження архіву поїздок</div>';
+            }
+        }
+
+        async function openTripDetails(tripId) {
+            try {
+                const res = await fetch(apiUrl(`api/trips/${tripId}`));
+                const data = await res.json();
+                const trip = data.trip;
+                const records = data.records;
+
+                document.getElementById('modalTripTitle').innerText = `Поїздка #${trip.id}`;
+                document.getElementById('modalTripSub').innerText = `${formatDate(trip.start_time)} • Статус: ${trip.status === 'active' ? 'В процесі' : 'Завершена'}`;
+                
+                document.getElementById('modalTripDist').innerText = `${trip.distance_km || 0} km`;
+                document.getElementById('modalTripDuration').innerText = formatDuration(
+                    Math.round((new Date(trip.end_time || Date.now()) - new Date(trip.start_time)) / 1000)
+                );
+                document.getElementById('modalTripAvg').innerText = `${Math.round(trip.avg_speed || 0)} km/h`;
+                document.getElementById('modalTripMax').innerText = `${Math.round(trip.max_speed || 0)} km/h`;
+                document.getElementById('modalTripFuel').innerText = `${trip.fuel_liters || 0} л`;
+                document.getElementById('modalTripCost').innerText = `${trip.trip_cost_uah || 0} ₴`;
+
+                document.getElementById('tripModal').style.display = 'flex';
+
+                const labels = records.map(r => r.timestamp.split(' ')[1] || r.timestamp);
+                const speeds = records.map(r => r.speed);
+                const rpms = records.map(r => r.rpm);
+
+                if (modalSpeedChartInstance) modalSpeedChartInstance.destroy();
+                if (modalRpmChartInstance) modalRpmChartInstance.destroy();
+
+                const ctxM1 = document.getElementById('modalSpeedChart').getContext('2d');
+                modalSpeedChartInstance = new Chart(ctxM1, {
+                    type: 'line',
+                    data: { labels, datasets: [{ data: speeds, borderColor: '#36a2eb', borderWidth: 2, tension: 0.3, fill: true, backgroundColor: 'rgba(54, 162, 235, 0.15)' }] },
+                    options: { ...commonOptions, plugins: { title: { display: true, text: 'Графік швидкості (km/h)', color: '#fff' } } }
+                });
+
+                const ctxM2 = document.getElementById('modalRpmChart').getContext('2d');
+                modalRpmChartInstance = new Chart(ctxM2, {
+                    type: 'line',
+                    data: { labels, datasets: [{ data: rpms, borderColor: '#ff6384', borderWidth: 2, tension: 0.3, fill: true, backgroundColor: 'rgba(255, 99, 132, 0.15)' }] },
+                    options: { ...commonOptions, plugins: { title: { display: true, text: 'Графік обертів RPM', color: '#fff' } } }
+                });
+            } catch (err) {
+                alert('Не вдалося завантажити деталі поїздки');
+            }
+        }
+
+        function closeTripModal() {
+            document.getElementById('tripModal').style.display = 'none';
+        }
+
+        async function deleteTrip(tripId) {
+            if (!confirm('Видалити цю поїздку з історії?')) return;
+            try {
+                await fetch(apiUrl(`api/trips/${tripId}`), { method: 'DELETE' });
+                loadTrips();
+            } catch (err) {
+                alert('Помилка видалення');
+            }
+        }
+
+        async function finishTrip() {
+            if (!confirm('Завершити поточну активну поїздку?')) return;
+            try {
+                await fetch(apiUrl('api/trips/finish'), { method: 'POST' });
+                fetchLatest();
+                alert('Сесію завершено!');
+            } catch (err) {
+                alert('Помилка завершення сесії');
+            }
+        }
+
+        // Gas Stations Logic
+        const stationBrandClasses = {
+            'OKKO': 'station-brand-okko',
+            'WOG': 'station-brand-wog',
+            'UPG': 'station-brand-upg',
+            'KLO': 'station-brand-klo',
+            'UKRNAFTA': 'station-brand-ukrnafta'
+        };
+
+        const stationIcons = {
+            'OKKO': '🟢',
+            'WOG': '🟢',
+            'UPG': '🔵',
+            'KLO': '🟡',
+            'UKRNAFTA': '🔷'
+        };
+
+        async function loadGasStations() {
+            const container = document.getElementById('gasStationsList');
+            container.innerHTML = '<div class="empty-state">⏳ Отримання цін з АЗС...</div>';
+
+            try {
+                const res = await fetch(apiUrl('api/fuel-prices'));
+                const stations = await res.json();
+
+                if (!stations || stations.length === 0) {
+                    container.innerHTML = '<div class="empty-state">Немає даних про ціни</div>';
+                    return;
+                }
+
+                // Update last updated info
+                const latestTime = stations[0]?.updated_at;
+                if (latestTime) {
+                    document.getElementById('fuelLastUpdated').innerText = `Останнє оновлення: ${formatDate(latestTime)}`;
+                }
+
+                const currentPriceVal = parseFloat(document.getElementById('globalFuelPriceInput').value);
+
+                container.innerHTML = stations.map(s => {
+                    const brandClass = stationBrandClasses[s.station] || '';
+                    const icon = stationIcons[s.station] || '⛽';
+                    const isSelected = Math.abs(currentPriceVal - s.price) < 0.05;
+
+                    return `
+                        <div class="glass-panel station-card ${brandClass}">
+                            <div class="station-brand-header">
+                                <div class="station-logo-badge">
+                                    <span>${icon}</span>
+                                    <span>${s.station}</span>
+                                </div>
+                                <span class="fuel-badge-tag">А-95</span>
+                            </div>
+
+                            <div class="station-price-box">
+                                <span class="station-price-val">${Number(s.price).toFixed(2)}</span>
+                                <span class="station-price-currency">грн / л</span>
+                            </div>
+
+                            <div class="station-update-time">
+                                🕒 ${formatDate(s.updated_at)}
+                            </div>
+
+                            <button class="btn-apply-price ${isSelected ? 'btn-applied' : ''}" 
+                                onclick="applyStationPrice(${s.price}, '${s.station}')">
+                                ${isSelected ? '✓ Вибрано' : '🎯 Застосувати'}
+                            </button>
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                container.innerHTML = '<div class="empty-state" style="color:#ef4444;">Помилка завантаження цін АЗС</div>';
+            }
+        }
+
+        async function applyStationPrice(price, stationName) {
+            await saveFuelPrice(price);
+            loadGasStations();
+        }
+
+        async function refreshGasStations() {
+            const btn = document.getElementById('btnRefreshGas');
+            btn.disabled = true;
+            btn.innerText = '⏳ Оновлюємо...';
+
+            try {
+                await fetch(apiUrl('api/fuel-prices/refresh'), { method: 'POST' });
+                await loadGasStations();
+            } catch (err) {
+                alert('Помилка оновлення');
+            } finally {
+                btn.disabled = false;
+                btn.innerText = '🔄 Оновити зараз';
+            }
+        }
+
+        async function fetchDeviceStatus() {
+            try {
+                const res = await fetch(apiUrl('api/device/status'));
+                const data = await res.json();
+                const logsEl = document.getElementById('espLogsConsole');
+                const badgeEl = document.getElementById('espStatusBadge');
+
+                if (data.status && data.status.bt && badgeEl) {
+                    const bt = data.status.bt;
+                    if (bt === 'connected') {
+                        badgeEl.className = 'trip-badge badge-active';
+                        badgeEl.style.background = 'rgba(34, 197, 94, 0.2)';
+                        badgeEl.style.color = '#4ade80';
+                        badgeEl.innerText = '🟢 Bluetooth OBD2 З’єднано';
+                    } else if (bt === 'connecting' || bt === 'scanning') {
+                        badgeEl.className = 'trip-badge badge-active';
+                        badgeEl.style.background = 'rgba(234, 179, 8, 0.2)';
+                        badgeEl.style.color = '#facc15';
+                        badgeEl.innerText = '🟡 Пошук / Підключення Bluetooth...';
+                    } else {
+                        badgeEl.className = 'trip-badge badge-completed';
+                        badgeEl.style.background = 'rgba(239, 68, 68, 0.2)';
+                        badgeEl.style.color = '#f87171';
+                        badgeEl.innerText = '🔴 Bluetooth Не підключено';
+                    }
+                }
+
+                if (data.logs && data.logs.length > 0 && logsEl) {
+                    logsEl.innerHTML = data.logs.map(l => {
+                        let color = '#38bdf8';
+                        if (l.level === 'warn') color = '#facc15';
+                        if (l.level === 'error') color = '#f87171';
+                        if (l.level === 'success') color = '#4ade80';
+                        return `<div style="color: ${color}; margin-bottom: 2px;">[${l.timestamp}] ${l.message}</div>`;
+                    }).join('');
+                    logsEl.scrollTop = logsEl.scrollHeight;
+                }
+            } catch(err) {}
+        }
+
+        loadSettings();
+        fetchLatest();
+        fetchHistory();
+        fetchDeviceStatus();
+        liveTimer1 = setInterval(fetchLatest, 2000);
+        liveTimer2 = setInterval(fetchHistory, 5000);
+        setInterval(fetchDeviceStatus, 2000);
+    </script>
+</body>
+</html>

@@ -69,11 +69,18 @@ uint8_t elmMac[6] = {0x00, 0x00, 0x00, 0x33, 0x33, 0x33};
 
 ---
 
-## 🚀 2. Деплой Сервера (Node.js / Docker)
+## 🚀 2. Деплой Сервера (Home Assistant / Docker / Node.js)
 
-Ви можете розгорнути backend на будь-якому Linux VPS, Home Assistant або комп'ютері.
+### Спосіб А: Як Home Assistant Add-on (Рекомендовано для Home Assistant) 🏠
 
-### Спосіб А: Через Docker Compose (Рекомендовано)
+1. Скопіюйте папку `ha-addon/esp32-obd2` у директорію `/addons/` на сервері вашого Home Assistant (через Samba Share, SSH або Studio Code Server).
+2. У Home Assistant відкрийте: **Налаштування** ➡️ **Додатки** ➡️ **Магазин додатків** ➡️ натисніть `⋮` (вгорі праворуч) ➡️ **Оновити**.
+3. У розділі **Локальні додатки** оберіть **ESP32 OBD2 Telemetry & WebApp** та натисніть **Встановити**.
+4. У вкладці **Конфігурація** вкажіть ваш `telegram_bot_token` (за потреби) та натисніть **Запустити**.
+5. Увімкніть **Показувати на бічній панелі**, щоб відкривати дашборд прямо в меню Home Assistant (через Ingress)!
+6. Детальніша інструкція та конфігурація сенсорів для `configuration.yaml` — у файлі [`DOCS.md`](file:///C:/Users/Oleksandr/.gemini/antigravity-ide/scratch/esp32-obd/ha-addon/esp32-obd2/DOCS.md).
+
+### Спосіб Б: Через Docker Compose
 
 База даних `obd_data.db` зберігається у Docker Volume (`obd_db_data`), тому дані зберігаються навіть при оновленні контейнера.
 
@@ -91,7 +98,7 @@ uint8_t elmMac[6] = {0x00, 0x00, 0x00, 0x33, 0x33, 0x33};
    docker logs -f esp32-obd2-backend
    ```
 
-### Спосіб Б: Локальний запуск (Node.js)
+### Спосіб В: Локальний запуск (Node.js)
 
 1. Перейдіть до папки: `cd esp32-obd2-backend`
 2. Встановіть залежності: `npm install`
@@ -101,6 +108,7 @@ uint8_t elmMac[6] = {0x00, 0x00, 0x00, 0x33, 0x33, 0x33};
    TELEGRAM_BOT_TOKEN=ваш_токен_бота
    ```
 4. Запустіть сервер: `npm start`
+
 
 ---
 

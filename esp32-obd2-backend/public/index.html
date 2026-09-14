@@ -200,6 +200,14 @@
             tg.ready();
         }
 
+        // Home Assistant Ingress & Standalone URL Resolver
+        function apiUrl(path) {
+            const clean = path.startsWith('/') ? path.slice(1) : path;
+            const pathname = window.location.pathname;
+            const base = pathname.endsWith('/') ? pathname : pathname.substring(0, pathname.lastIndexOf('/') + 1);
+            return base + clean;
+        }
+
         let currentTab = 'live';
         let liveTimer1 = null;
         let liveTimer2 = null;
@@ -255,7 +263,7 @@
         // Settings (Fuel Price)
         async function loadSettings() {
             try {
-                const res = await fetch('/api/settings');
+                const res = await fetch(apiUrl('api/settings'));
                 const data = await res.json();
                 if (data.fuel_price) {
                     document.getElementById('globalFuelPriceInput').value = Number(data.fuel_price).toFixed(2);
@@ -269,7 +277,7 @@
 
             document.getElementById('globalFuelPriceInput').value = Number(inputVal).toFixed(2);
             try {
-                await fetch('/api/settings', {
+                await fetch(apiUrl('api/settings'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ fuel_price: inputVal })
@@ -281,7 +289,7 @@
         async function fetchLatest() {
             if (currentTab !== 'live') return;
             try {
-                const res = await fetch('/api/data');
+                const res = await fetch(apiUrl('api/data'));
                 const data = await res.json();
                 
                 document.getElementById('tripDist').innerText = Number(data.trip.distance_km || 0).toFixed(1);
@@ -299,7 +307,7 @@
         async function fetchHistory() {
             if (currentTab !== 'live') return;
             try {
-                const res = await fetch('/api/history');
+                const res = await fetch(apiUrl('api/history'));
                 const data = await res.json();
                 const labels = data.map(d => d.timestamp);
                 speedChart.data.labels = labels;
@@ -336,8 +344,9 @@
             listEl.innerHTML = '<div class="empty-state">⏳ Завантаження архіву...</div>';
             
             try {
-                const res = await fetch('/api/trips');
+                const res = await fetch(apiUrl('api/trips'));
                 const trips = await res.json();
+
 
                 if (!trips || trips.length === 0) {
                     listEl.innerHTML = `
@@ -405,7 +414,7 @@
 
         async function openTripDetails(tripId) {
             try {
-                const res = await fetch(`/api/trips/${tripId}`);
+                const res = await fetch(apiUrl(`api/trips/${tripId}`));
                 const data = await res.json();
                 const trip = data.trip;
                 const records = data.records;
@@ -456,7 +465,7 @@
         async function deleteTrip(tripId) {
             if (!confirm('Видалити цю поїздку з історії?')) return;
             try {
-                await fetch(`/api/trips/${tripId}`, { method: 'DELETE' });
+                await fetch(apiUrl(`api/trips/${tripId}`), { method: 'DELETE' });
                 loadTrips();
             } catch (err) {
                 alert('Помилка видалення');
@@ -466,7 +475,7 @@
         async function finishTrip() {
             if (!confirm('Завершити поточну активну поїздку?')) return;
             try {
-                await fetch('/api/trips/finish', { method: 'POST' });
+                await fetch(apiUrl('api/trips/finish'), { method: 'POST' });
                 fetchLatest();
                 alert('Сесію завершено!');
             } catch (err) {
@@ -496,7 +505,7 @@
             container.innerHTML = '<div class="empty-state">⏳ Отримання цін з АЗС...</div>';
 
             try {
-                const res = await fetch('/api/fuel-prices');
+                const res = await fetch(apiUrl('api/fuel-prices'));
                 const stations = await res.json();
 
                 if (!stations || stations.length === 0) {
@@ -559,7 +568,7 @@
             btn.innerText = '⏳ Оновлюємо...';
 
             try {
-                await fetch('/api/fuel-prices/refresh', { method: 'POST' });
+                await fetch(apiUrl('api/fuel-prices/refresh'), { method: 'POST' });
                 await loadGasStations();
             } catch (err) {
                 alert('Помилка оновлення');
@@ -571,7 +580,7 @@
 
         async function fetchDeviceStatus() {
             try {
-                const res = await fetch('/api/device/status');
+                const res = await fetch(apiUrl('api/device/status'));
                 const data = await res.json();
                 const logsEl = document.getElementById('espLogsConsole');
                 const badgeEl = document.getElementById('espStatusBadge');

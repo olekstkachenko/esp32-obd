@@ -1,7 +1,7 @@
 name: "ESP32 OBD2 Telemetry & WebApp"
-description: "Автономний сервер телеметрії авто для ESP32-OBD2 та Telegram Mini App з аналітикою поїздок"
+description: "Автономний сервер телеметрії авто для ESP32-OBD2: Live-графіки через Ingress, журнал поїздок, паливна аналітика та моніторинг цін на АЗС (WOG, UPG, OKKO, KLO, Ukrnafta)"
 slug: "esp32_obd2"
-version: "1.0.2"
+version: "1.0.3"
 arch:
   - aarch64
   - amd64

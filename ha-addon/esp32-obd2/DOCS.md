@@ -1,106 +1,100 @@
-# ESP32 OBD2 Telemetry & WebApp — Home Assistant Add-on 🚗📊🏠
+# Повна документація ESP32 OBD2 Telemetry & WebApp 🚗📊🏠
 
-Цей додаток інтегрує автономний сервер телеметрії автомобіля **ESP32-OBD2** у ваш **Home Assistant**.
-
----
-
-## 🌟 Можливості в Home Assistant
-
-1. **🖥️ Home Assistant Ingress:** Дашборд поїздок та графіки доступні прямо в бічному меню Home Assistant.
-2. **💾 Персистентна база даних:** База поїздок та телеметрії зберігається у захищеному розділі `/data/obd_data.db` і не втрачається при перезапуску чи оновленнях.
-3. **🤖 Telegram Bot & Mini App:** Автоматичні сповіщення про завершені поїздки та інтерактивний Telegram WebApp.
-4. **⛽ Ціни на пальне (А-95):** Моніторинг цін на АЗС WOG, UPG, OKKO, KLO, Ukrnafta з автопідрахунком вартості поїздки у гривнях.
-5. **📡 Сенсори в Home Assistant:** Можливість передачі параметрів авто (швидкість, RPM, температура, напруга АКБ) у сенсори Home Assistant для створення автоматизацій.
+Ласкаво просимо до повної документації додатку **ESP32 OBD2 Telemetry & WebApp** для **Home Assistant**!
 
 ---
 
-## 🚀 Встановлення (Покроково)
+## 📑 Зміст
 
-### Крок 1: Копіювання файлів на Home Assistant
-
-Скопіюйте папку `ha-addon/esp32-obd2` на ваш пристрій з Home Assistant у директорію `/addons/`:
-
-- **Через розширення Samba Share:**
-  - Підключіться до мережевої папки `\\homeassistant.local\addons`.
-  - Створіть там папку `esp32-obd2` та скопіюйте всі файли з `ha-addon/esp32-obd2/`.
-
-- **Через Studio Code Server / File Editor:**
-  - Відкрийте VS Code Server у Home Assistant.
-  - У папці `/addons/` створіть `esp32-obd2` та перенесіть файли.
-
-- **Через SSH / Terminal:**
-  ```bash
-  mkdir -p /addons/esp32-obd2
-  # скопіюйте файли
-  ```
+1. [Огляд та принцип роботи](#1-огляд-та-принцип-роботи)
+2. [Параметри конфігурації додатку](#2-параметри-конфігурації-додатку)
+3. [Налаштування Telegram-бота](#3-налаштування-telegram-бота)
+4. [Налаштування та прошивка ESP32](#4-налаштування-та-прошивка-esp32)
+5. [Інтеграція в Home Assistant (Сенсори та Картки)](#5-інтеграція-в-home-assistant)
+6. [Корисні автоматизації в Home Assistant](#6-корисні-автоматизації)
+7. [Довідник REST API](#7-довідник-rest-api)
+8. [Усунення несправностей (FAQ)](#8-усунення-несправностей-faq)
 
 ---
 
-### Крок 2: Встановлення через інтерфейс Home Assistant
+## 1. Огляд та принцип роботи
 
-1. У бічному меню Home Assistant перейдіть:  
-   **Налаштування (Settings)** ➡️ **Додатки (Add-ons)** ➡️ **Магазин додатків (Add-on Store)**.
-2. У правому верхньому кутку натисніть **⋮ (три крапки)** ➡️ **Оновити (Check for updates)**.
-3. У розділі **Локальні додатки (Local add-ons)** з'явиться **"ESP32 OBD2 Telemetry & WebApp"**.
-4. Натисніть на додаток і виберіть **Встановити (Install)**. Зачекайте 1-2 хвилини, поки збереться контейнер.
+Система працює повністю в автоматичному режимі:
+1. **ESP32** при включенні запалювання авто підключається по Bluetooth до сканера **ELM327**.
+2. Зчитуються показники: **швидкість (km/h)**, **оберти двигуна (RPM)**, **температура антифризу (°C)**, **напруга бортової мережі (В)** та **MAF (розхід палива)**.
+3. Дані передаються через Wi-Fi на сервер Home Assistant.
+4. Якщо телефон з точкою доступу вимкнений, ESP32 зберігає поїздку в **офлайн-буфер RAM** (до ~30 хв безперервного руху) і відправляє всі точки пакетом (`/api/obd/batch`) при підключенні до інтернету.
+5. Сервер у Home Assistant автоматично групує точки в поїздки, веде історію, підраховує витрату пального, вартість за поточними цінами на АЗС та відправляє сповіщення у Telegram.
 
 ---
 
-### Крок 3: Налаштування додатку
+## 2. Параметри конфігурації додатку
 
-Перейдіть на вкладку **Конфігурація (Configuration)** додатку:
+У вкладці **Конфігурація (Configuration)** додатку доступні такі параметри:
 
-```yaml
-telegram_bot_token: "ВАШ_ТОКЕН_TELEGRAM_БОТА"
-webapp_url: "https://your-homeassistant-domain.com:3000"
-fuel_price: "82.90"
-port: 3000
+| Параметр | Тип | За замовчуванням | Опис |
+|---|---|---|---|
+| `telegram_bot_token` | `string` | `""` (пусто) | Токен вашого Telegram-бота, отриманий від `@BotFather`. Якщо вказано, бот надсилатиме сповіщення та звіти. |
+| `webapp_url` | `string` | `""` (пусто) | Публічний HTTPS URL вашого додатку (наприклад, через Cloudflare Tunnel, Nabu Casa або Ngrok) для запуску кнопки WebApp у Telegram. |
+| `fuel_price` | `string` | `"82.90"` | Базова ціна 1 літра бензину А-95 у гривнях (`грн/л`) для розрахунку вартості поїздок. |
+| `port` | `integer` | `3000` | Внутрішній/зовнішній TCP-порт сервера для прийому HTTP-запитів від ESP32. |
+
+---
+
+## 3. Налаштування Telegram-бота
+
+Щоб отримувати сповіщення про завершені поїздки та відкривати додаток прямо з Telegram:
+
+1. Відкрийте [@BotFather](https://t.me/BotFather) у Telegram та створіть нового бота командою `/newbot`.
+2. Скопіюйте виданий токен (наприклад, `7123456789:AAH...`) і вставте його в поле `telegram_bot_token` у конфігурації аддону.
+3. Налаштуйте веб-кнопку Mini App у `@BotFather`:
+   - Надішліть команду `/setmenubutton`.
+   - Оберіть вашого бота.
+   - Введіть назву кнопки (наприклад, `🚗 OBD2 Дашборд`).
+   - Вкажіть публічну адресу вашого сервера (наприклад, `https://ваш-тунель.trycloudflare.com/`).
+
+---
+
+## 4. Налаштування та прошивка ESP32
+
+Прошивка знаходиться в репозиторії в папці `esp32-obd2/`.
+
+У файлі `esp32-obd2/src/main.cpp` перевірте параметри:
+
+```cpp
+// 1. Дані вашої точки доступу Wi-Fi (наприклад, роздача з телефону в авто):
+const char* ssid = "Pajero";
+const char* password = "ваш_пароль_wifi";
+
+// 2. Адреса сервера Home Assistant:
+// Якщо ESP32 підключається до домашнього Wi-Fi:
+const char* serverUrlBase = "http://192.168.1.XXX:3000/api/obd";
+
+// Або якщо через 4G/LTE точку доступу (використовуйте публічний тунель):
+const char* serverUrlBase = "https://ваш-домен.trycloudflare.com/api/obd";
+
+// 3. Bluetooth сканер ELM327:
+const char* elmName = "OBDII";
+const char* elmPin = "1234";
 ```
 
-- `telegram_bot_token` — токен бота від `@BotFather` (якщо використовуєте Telegram).
-- `webapp_url` — публічна HTTPS-адреса додатку (Cloudflare / Nabu Casa / Ngrok), якщо відкриваєте через кнопку бота.
-- `fuel_price` — ціна за 1 літр А-95 (можна змінювати прямо з вебінтерфейсу).
-- `port` — порт сервера (за замовчуванням `3000`).
+> [!TIP]
+> У `platformio.ini` автоматично встановлено параметр `board_build.partitions = huge_app.csv`, оскільки суміщення Bluetooth Classic та Wi-Fi/SSL вимагає розширеного розділу пам'яті програми (до 3.1 МБ).
 
 ---
 
-### Крок 4: Запуск та відкриття
+## 5. Інтеграція в Home Assistant
 
-1. Увімкніть перемикачі:
-   - ✅ **Запускати під час завантаження (Start on boot)**
-   - ✅ **Сторожовий таймер (Watchdog)**
-   - ✅ **Показувати на бічній панелі (Show in sidebar)**
-2. Натисніть **Запустити (Start)**.
-3. Натисніть **Відкрити вебінтерфейс (Open Web UI)** або оберіть **OBD2 Tracker** у лівому меню Home Assistant!
+Ви можете створити нативні сенсори вашого авто в Home Assistant.
 
----
+### Крок 1: Додайте сенсори у `configuration.yaml`
 
-## 📡 Підключення прошивки ESP32 до Home Assistant
-
-У файлі `esp32-obd2/src/main.cpp` вкажіть адресу вашого сервера Home Assistant:
-
-- **Якщо ESP32 підключається до домашнього Wi-Fi:**
-  ```cpp
-  const char* serverUrlBase = "http://192.168.1.XXX:3000/api/obd";
-  ```
-- **Якщо через точку доступу телефону (4G/LTE):**
-  Використовуйте вашу публічну адресу Home Assistant (або безкоштовний Cloudflare Tunnel / Ngrok):
-  ```cpp
-  const char* serverUrlBase = "https://ваш-тунель.trycloudflare.com/api/obd";
-  ```
-
----
-
-## 🏠 Інтеграція сенсорів у `configuration.yaml` Home Assistant
-
-Ви можете створити сенсори автомобіля всередині Home Assistant для відображення на головному дашборді та автоматизацій.
-
-Додайте у ваш `configuration.yaml`:
+Відкрийте файл `configuration.yaml` у Home Assistant та додайте наступний блок:
 
 ```yaml
 sensor:
   - platform: rest
-    name: "Pajero Telemetry"
+    name: "Pajero OBD2 Telemetry"
     resource: "http://localhost:3000/api/data"
     scan_interval: 5
     json_attributes_path: "$.latest"
@@ -110,37 +104,121 @@ sensor:
       - temp
       - voltage
       - fuel_rate
-    value_template: "{{ value_json.latest.speed | round(0) }}"
+    value_template: "{{ value_json.latest.speed | default(0) | round(0) }}"
     unit_of_measurement: "km/h"
+
+  - platform: rest
+    name: "Pajero Active Trip"
+    resource: "http://localhost:3000/api/data"
+    scan_interval: 10
+    json_attributes_path: "$.trip"
+    json_attributes:
+      - distance_km
+      - avg_speed
+      - max_speed
+    value_template: "{{ value_json.trip.distance_km | default(0) | round(1) }}"
+    unit_of_measurement: "km"
 
 template:
   - sensor:
       - name: "Pajero Engine RPM"
-        state: "{{ state_attr('sensor.pajero_telemetry', 'rpm') | round(0) }}"
+        state: "{{ state_attr('sensor.pajero_obd2_telemetry', 'rpm') | default(0) | round(0) }}"
         unit_of_measurement: "RPM"
         icon: "mdi:engine"
 
       - name: "Pajero Coolant Temp"
-        state: "{{ state_attr('sensor.pajero_telemetry', 'temp') | round(0) }}"
+        state: "{{ state_attr('sensor.pajero_obd2_telemetry', 'temp') | default(0) | round(0) }}"
         unit_of_measurement: "°C"
         device_class: temperature
         icon: "mdi:coolant-temperature"
 
       - name: "Pajero Battery Voltage"
-        state: "{{ state_attr('sensor.pajero_telemetry', 'voltage') | round(1) }}"
+        state: "{{ state_attr('sensor.pajero_obd2_telemetry', 'voltage') | default(0) | round(1) }}"
         unit_of_measurement: "V"
         device_class: voltage
         icon: "mdi:car-battery"
 
       - name: "Pajero Fuel Rate"
-        state: "{{ state_attr('sensor.pajero_telemetry', 'fuel_rate') | round(1) }}"
+        state: "{{ state_attr('sensor.pajero_obd2_telemetry', 'fuel_rate') | default(0) | round(1) }}"
         unit_of_measurement: "L/h"
         icon: "mdi:gas-station"
+
+      - name: "Pajero Trip Average Speed"
+        state: "{{ state_attr('sensor.pajero_active_trip', 'avg_speed') | default(0) | round(0) }}"
+        unit_of_measurement: "km/h"
+        icon: "mdi:speedometer-slow"
 ```
 
-### Приклад автоматизації (Сповіщення при перегріві двигуна):
+---
+
+### Крок 2: Приклади карток для Lovelace Dashboard
+
+#### 🏎️ Картка приладів (Gauge Cards):
 ```yaml
-alias: "Pajero: Перегрів двигуна!"
+type: horizontal-stack
+cards:
+  - type: gauge
+    entity: sensor.pajero_obd2_telemetry
+    name: Швидкість
+    min: 0
+    max: 180
+    needle: true
+    severity:
+      green: 0
+      yellow: 90
+      red: 130
+
+  - type: gauge
+    entity: sensor.pajero_engine_rpm
+    name: Оберти RPM
+    min: 0
+    max: 6000
+    needle: true
+    severity:
+      green: 0
+      yellow: 3500
+      red: 5000
+```
+
+#### 🔋 Стан акумулятора та температури:
+```yaml
+type: entities
+title: 🚗 Телеметрія Pajero
+show_header_toggle: false
+entities:
+  - entity: sensor.pajero_battery_voltage
+    name: Напруга АКБ
+  - entity: sensor.pajero_coolant_temp
+    name: Температура двигуна
+  - entity: sensor.pajero_fuel_rate
+    name: Миттєва витрата
+  - entity: sensor.pajero_active_trip
+    name: Дистанція поточної поїздки
+```
+
+---
+
+## 6. Корисні автоматизації
+
+### ⚠️ Сповіщення: Низька напруга акумулятора авто
+```yaml
+alias: "Pajero: Низький заряд АКБ"
+trigger:
+  - platform: numeric_state
+    entity_id: sensor.pajero_battery_voltage
+    below: 11.8
+    for:
+      minutes: 1
+action:
+  - service: notify.persistent_notification
+    data:
+      title: "🪫 Увага: Акумулятор Pajero розряджений"
+      message: "Напруга впала до {{ states('sensor.pajero_battery_voltage') }} В. Можливо, варто підзарядити АКБ."
+```
+
+### 🌡️ Сповіщення: Перегрів двигуна
+```yaml
+alias: "Pajero: Перегрів двигуна"
 trigger:
   - platform: numeric_state
     entity_id: sensor.pajero_coolant_temp
@@ -148,6 +226,44 @@ trigger:
 action:
   - service: notify.persistent_notification
     data:
-      title: "⚠️ Увага: Двигун Pajero"
-      message: "Температура охолоджуючої рідини досягла {{ states('sensor.pajero_coolant_temp') }}°C!"
+      title: "🔥 УВАГА: Перегрів двигуна!"
+      message: "Температура ОР становить {{ states('sensor.pajero_coolant_temp') }}°C. Зупиніть рух та перевірте рівень рідини."
 ```
+
+---
+
+## 7. Довідник REST API
+
+| Метод | Шлях | Опис |
+|---|---|---|
+| `POST` | `/api/obd` | Приймає окремий запис телеметрії від ESP32 `{rpm, speed, temp, voltage, fuel_rate}`. |
+| `POST` | `/api/obd/batch` | Приймає масив офлайн-буферизованих точок `{records: [...]}`. |
+| `GET` | `/api/data` | Повертає останні показання та поточну активну поїздку. |
+| `GET` | `/api/history` | Повертає останні 60 точок для побудови Live-графіків швидкості та RPM. |
+| `GET` | `/api/trips` | Повертає архів усіх поїздок із розрахованою дистанцією, витратою пального та вартістю. |
+| `GET` | `/api/trips/:id` | Детальна інформація та повний масив точок конкретної поїздки. |
+| `DELETE`| `/api/trips/:id` | Видалення поїздки з архіву. |
+| `POST` | `/api/trips/finish` | Примусове завершення поточної сесії. |
+| `GET` | `/api/fuel-prices` | Список актуальних цін А-95 на АЗС (OKKO, WOG, UPG, KLO, Ukrnafta). |
+| `POST` | `/api/fuel-prices/refresh` | Примусовий запуск парсера цін АЗС. |
+| `GET` | `/api/settings` | Отримання налаштувань (ціна пального). |
+| `POST` | `/api/settings` | Оновлення збереженої ціни пального `{fuel_price: 82.90}`. |
+| `POST` | `/api/device/log` | Прийом логів та діагностичних статусів від ESP32. |
+| `GET` | `/api/device/status` | Отримання останніх логів та статусу з'єднання ESP32 з ELM327. |
+
+---
+
+## 8. Усунення несправностей (FAQ)
+
+### ❓ Де зберігається база даних і чи видалиться вона при оновленні?
+База даних `obd_data.db` зберігається у захищеному розділі `/data` Home Assistant. Вона **ніколи не стирається** при оновленні чи перезапуску аддону.
+
+### ❓ ESP32 не підключається до сервера:
+- Перевірте, чи порт `3000` вказано у налаштуваннях аддону.
+- Якщо ESP32 підключається через домашній Wi-Fi, переконайтеся, що IP-адреса Home Assistant вказана правильно.
+- Якщо підключення йде через 4G/LTE точку доступу телефону, використовуйте зовнішній тунель (наприклад, Cloudflare Tunnel або Nabu Casa).
+
+### ❓ Як змінити ціну пального?
+Ви можете змінити ціну:
+- Прямо у вкладці **«Ціни АЗС»** або на головному екрані дашборду Ingress.
+- Або обравши АЗС зі списку (OKKO, WOG, UPG, KLO, Ukrnafta) та натиснувши **«🎯 Застосувати»**.

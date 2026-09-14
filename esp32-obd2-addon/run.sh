@@ -7,15 +7,17 @@ echo "  🏠 Running inside Home Assistant Add-on Environment"
 echo "========================================================="
 
 CONFIG_PATH=/data/options.json
+NGROK_AUTHTOKEN=""
+NGROK_DOMAIN=""
 
 if [ -f "$CONFIG_PATH" ]; then
     echo "📄 Reading Home Assistant configuration from $CONFIG_PATH..."
     if command -v jq >/dev/null 2>&1; then
-        PORT=$(jq -r '.port // 3000' $CONFIG_PATH)
+        PORT=$(jq -r '.port // 3000' "$CONFIG_PATH")
+        NGROK_AUTHTOKEN=$(jq -r '.ngrok_authtoken // empty' "$CONFIG_PATH")
+        NGROK_DOMAIN=$(jq -r '.ngrok_domain // empty' "$CONFIG_PATH")
         echo "🔹 Configured Port: $PORT"
     fi
-else
-    echo "ℹ️ Running with default environment settings."
 fi
 
 # Ensure persistent data directory exists
@@ -26,6 +28,22 @@ export DB_PATH=/data/obd_data.db
 export NODE_ENV=production
 
 echo "💾 Persistent DB Path: $DB_PATH"
-echo "🚀 Starting Node.js backend..."
 
+# Launch Ngrok background tunnel if authtoken is configured
+if [ -n "$NGROK_AUTHTOKEN" ] && [ "$NGROK_AUTHTOKEN" != "null" ]; then
+    echo "🌐 Configuring Ngrok authentication token..."
+    ngrok config add-authtoken "$NGROK_AUTHTOKEN" || true
+
+    if [ -n "$NGROK_DOMAIN" ] && [ "$NGROK_DOMAIN" != "null" ]; then
+        echo "🚀 Starting Ngrok tunnel with domain: $NGROK_DOMAIN -> Port 3000..."
+        ngrok http --url="$NGROK_DOMAIN" 3000 --log=stdout &
+    else
+        echo "🚀 Starting Ngrok tunnel on Port 3000..."
+        ngrok http 3000 --log=stdout &
+    fi
+else
+    echo "ℹ️ Ngrok authtoken not specified. Running in direct local/Ingress mode."
+fi
+
+echo "🚀 Starting Node.js backend..."
 exec node server.js

@@ -35,7 +35,9 @@
 | Параметр | Тип | За замовчуванням | Опис |
 |---|---|---|---|
 | `telegram_bot_token` | `string` | `""` (пусто) | Токен вашого Telegram-бота, отриманий від `@BotFather`. Якщо вказано, бот надсилатиме сповіщення та звіти. |
-| `webapp_url` | `string` | `""` (пусто) | Публічний HTTPS URL вашого додатку (наприклад, через Cloudflare Tunnel, Nabu Casa або Ngrok) для запуску кнопки WebApp у Telegram. |
+| `webapp_url` | `string` | `""` (пусто) | Публічний HTTPS URL вашого додатку (наприклад, ваш Ngrok-домен або Cloudflare) для відкриття WebApp у Telegram. |
+| `ngrok_authtoken` | `string` | `""` (пусто) | Ваш Auth Token від [ngrok.com](https://ngrok.com) для автоматичного запуску тунелю безпосередньо всередині Home Assistant. |
+| `ngrok_domain` | `string` | `""` (пусто) | Статичний домен Ngrok (наприклад: `your-subdomain.ngrok-free.dev`). Якщо пусто, створиться випадковий домен. |
 | `port` | `integer` | `3000` | Внутрішній/зовнішній TCP-порт сервера для прийому HTTP-запитів від ESP32. |
 
 ---

@@ -10,17 +10,17 @@
 #include "esp_gap_bt_api.h"
 
 // --- WiFi Credentials ---
-const char* ssid = "MyCar_WiFi";
-const char* password = "your_wifi_password";
+const char* ssid = "Pajero";
+const char* password = "090384wifi";
 
 // --- Server Details ---
-const char* serverUrlBase = "https://chief-winston-express-times.trycloudflare.com/api/obd";
+const char* serverUrlBase = "https://mankind-comprised-devotion.ngrok-free.dev/api/obd";
 
 // --- ELM327 Bluetooth Target ---
 const char* elmName = "OBDII";
 const char* elmPin = "1234";
 
-// Target ELM327 MAC Address
+// Target ELM327 MAC Address (Set your scanner MAC for instant direct connection)
 uint8_t elmMac[6] = {0x00, 0x00, 0x00, 0x33, 0x33, 0x33};
 
 // --- Forward Declarations ---
@@ -194,7 +194,6 @@ void flushBufferToServer() {
   http.end();
 }
 
-
 bool elmConnected = false;
 bool elmInitialized = false;
 
@@ -275,7 +274,7 @@ String getELMStatusStr(int8_t status) {
   switch (status) {
     case ELM_SUCCESS: return "OK (Успіх)";
     case ELM_NO_RESPONSE: return "NO_RESPONSE (ЕБУ не відповідає / вимкнено запалювання)";
-    case ELM_BUFFER_FULL: return "BUFFER_FULL (Буфер сканера переповнено)";
+    case ELM_BUFFER_OVERFLOW: return "BUFFER_OVERFLOW (Буфер сканера переповнено)";
     case ELM_GARBAGE: return "GARBAGE_DATA (Помилка протоколу / сміття в шині)";
     case ELM_UNABLE_TO_CONNECT: return "UNABLE_TO_CONNECT (Сканер не зміг підключитися до ЕБУ авто)";
     case ELM_NO_DATA: return "NO_DATA (ЕБУ авто не підтримує даний PID)";
@@ -305,7 +304,7 @@ void ensureELMConnected() {
       sendLog("🚀 УСПІХ! Протокол ELM327 успішно ініціалізовано! Почався збір даних телеметрії.", "success", "connected");
       elmInitialized = true;
     } else {
-      sendLog("⚠️ Bluetooth з'єднано, але сканер не відповів на протокол ELM327 (" + getELMStatusStr(myELM327.status) + ")", "warn", "connecting");
+      sendLog("⚠️ Bluetooth з'єднано, але сканер не відповів на протокол ELM327 (" + getELMStatusStr(myELM327.nb_rx_state) + ")", "warn", "connecting");
     }
   }
 }
@@ -358,10 +357,10 @@ void loop() {
       static int consecutiveErrors = 0;
 
       // Check if queries are failing
-      if (myELM327.status != ELM_SUCCESS && (isnan(rpm) || rpm <= 0) && (isnan(volt) || volt <= 0)) {
+      if (myELM327.nb_rx_state != ELM_SUCCESS && (isnan(rpm) || rpm <= 0) && (isnan(volt) || volt <= 0)) {
         consecutiveErrors++;
         if (consecutiveErrors % 5 == 0) {
-          sendLog("⚠️ Збій зчитування з авто: " + getELMStatusStr(myELM327.status) + " (Спроб: " + String(consecutiveErrors) + ")", "warn", "connected");
+          sendLog("⚠️ Збій зчитування з авто: " + getELMStatusStr(myELM327.nb_rx_state) + " (Спроб: " + String(consecutiveErrors) + ")", "warn", "connected");
         }
         if (consecutiveErrors >= 15) {
           sendLog("🔄 Занадто багато помилок зчитування від ЕБУ авто. Перезапуск протоколу ELM327...", "warn", "connecting");
@@ -381,7 +380,7 @@ void loop() {
       float fuel_rate = (maf > 0) ? (maf * 3600.0 / 14.7 / 717.0) : 0;
 
       // Push telemetry if any metric is valid or ELM reports success
-      if (volt > 0 || rpm > 0 || speed > 0 || temp > 0 || myELM327.status == ELM_SUCCESS) {
+      if (volt > 0 || rpm > 0 || speed > 0 || temp > 0 || myELM327.nb_rx_state == ELM_SUCCESS) {
         DEBUG_PORT.printf("✅ DATA: RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
                           rpm, speed, temp, volt, fuel_rate, (int)telemetryBuffer.size());
         

@@ -10,8 +10,8 @@
 #include "esp_gap_bt_api.h"
 
 // --- WiFi Credentials ---
-const char* ssid = "Pajero";
-const char* password = "090384wifi";
+const char* ssid = "MyCar_WiFi";
+const char* password = "your_wifi_password";
 
 // --- Server Details ---
 const char* serverUrlBase = "https://chief-winston-express-times.trycloudflare.com/api/obd";

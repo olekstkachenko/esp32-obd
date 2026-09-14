@@ -54,9 +54,9 @@
 2. Відкрийте папку `esp32-obd2` у VS Code.
 3. Перевірте та відредагуйте `src/main.cpp`:
    ```cpp
-   const char* ssid = "Pajero";           // Назва точки доступу (Pajero)
-   const char* password = "090384wifi";   // Пароль точки доступу
-   const char* serverUrlBase = "https://ваш-ngrok-домен.ngrok-free.dev/api/obd";
+   const char* ssid = "MyCar_WiFi";           // Назва вашої точки доступу Wi-Fi
+   const char* password = "your_wifi_password"; // Пароль точки доступу
+   const char* serverUrlBase = "https://ваш-домен.trycloudflare.com/api/obd";
    ```
 4. Підключіть ESP32 через USB-кабель до ПК.
 5. Натисніть кнопку **Upload** (стрілочка `→` внизу VS Code) для компіляції та завантаження.

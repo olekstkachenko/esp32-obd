@@ -63,8 +63,8 @@
 
 ```cpp
 // 1. Дані вашої точки доступу Wi-Fi (наприклад, роздача з телефону в авто):
-const char* ssid = "Pajero";
-const char* password = "ваш_пароль_wifi";
+const char* ssid = "MyCar_WiFi";
+const char* password = "your_wifi_password";
 
 // 2. Адреса сервера Home Assistant:
 // Якщо ESP32 підключається до домашнього Wi-Fi:
@@ -94,7 +94,7 @@ const char* elmPin = "1234";
 ```yaml
 sensor:
   - platform: rest
-    name: "Pajero OBD2 Telemetry"
+    name: "Car OBD2 Telemetry"
     resource: "http://localhost:3000/api/data"
     scan_interval: 5
     json_attributes_path: "$.latest"
@@ -108,7 +108,7 @@ sensor:
     unit_of_measurement: "km/h"
 
   - platform: rest
-    name: "Pajero Active Trip"
+    name: "Car Active Trip"
     resource: "http://localhost:3000/api/data"
     scan_interval: 10
     json_attributes_path: "$.trip"
@@ -121,30 +121,30 @@ sensor:
 
 template:
   - sensor:
-      - name: "Pajero Engine RPM"
-        state: "{{ state_attr('sensor.pajero_obd2_telemetry', 'rpm') | default(0) | round(0) }}"
+      - name: "Car Engine RPM"
+        state: "{{ state_attr('sensor.car_obd2_telemetry', 'rpm') | default(0) | round(0) }}"
         unit_of_measurement: "RPM"
         icon: "mdi:engine"
 
-      - name: "Pajero Coolant Temp"
-        state: "{{ state_attr('sensor.pajero_obd2_telemetry', 'temp') | default(0) | round(0) }}"
+      - name: "Car Coolant Temp"
+        state: "{{ state_attr('sensor.car_obd2_telemetry', 'temp') | default(0) | round(0) }}"
         unit_of_measurement: "°C"
         device_class: temperature
         icon: "mdi:coolant-temperature"
 
-      - name: "Pajero Battery Voltage"
-        state: "{{ state_attr('sensor.pajero_obd2_telemetry', 'voltage') | default(0) | round(1) }}"
+      - name: "Car Battery Voltage"
+        state: "{{ state_attr('sensor.car_obd2_telemetry', 'voltage') | default(0) | round(1) }}"
         unit_of_measurement: "V"
         device_class: voltage
         icon: "mdi:car-battery"
 
-      - name: "Pajero Fuel Rate"
-        state: "{{ state_attr('sensor.pajero_obd2_telemetry', 'fuel_rate') | default(0) | round(1) }}"
+      - name: "Car Fuel Rate"
+        state: "{{ state_attr('sensor.car_obd2_telemetry', 'fuel_rate') | default(0) | round(1) }}"
         unit_of_measurement: "L/h"
         icon: "mdi:gas-station"
 
-      - name: "Pajero Trip Average Speed"
-        state: "{{ state_attr('sensor.pajero_active_trip', 'avg_speed') | default(0) | round(0) }}"
+      - name: "Car Trip Average Speed"
+        state: "{{ state_attr('sensor.car_active_trip', 'avg_speed') | default(0) | round(0) }}"
         unit_of_measurement: "km/h"
         icon: "mdi:speedometer-slow"
 ```
@@ -158,7 +158,7 @@ template:
 type: horizontal-stack
 cards:
   - type: gauge
-    entity: sensor.pajero_obd2_telemetry
+    entity: sensor.car_obd2_telemetry
     name: Швидкість
     min: 0
     max: 180
@@ -169,7 +169,7 @@ cards:
       red: 130
 
   - type: gauge
-    entity: sensor.pajero_engine_rpm
+    entity: sensor.car_engine_rpm
     name: Оберти RPM
     min: 0
     max: 6000
@@ -183,16 +183,16 @@ cards:
 #### 🔋 Стан акумулятора та температури:
 ```yaml
 type: entities
-title: 🚗 Телеметрія Pajero
+title: 🚗 Телеметрія автомобіля
 show_header_toggle: false
 entities:
-  - entity: sensor.pajero_battery_voltage
+  - entity: sensor.car_battery_voltage
     name: Напруга АКБ
-  - entity: sensor.pajero_coolant_temp
+  - entity: sensor.car_coolant_temp
     name: Температура двигуна
-  - entity: sensor.pajero_fuel_rate
+  - entity: sensor.car_fuel_rate
     name: Миттєва витрата
-  - entity: sensor.pajero_active_trip
+  - entity: sensor.car_active_trip
     name: Дистанція поточної поїздки
 ```
 
@@ -202,32 +202,32 @@ entities:
 
 ### ⚠️ Сповіщення: Низька напруга акумулятора авто
 ```yaml
-alias: "Pajero: Низький заряд АКБ"
+alias: "Авто: Низький заряд АКБ"
 trigger:
   - platform: numeric_state
-    entity_id: sensor.pajero_battery_voltage
+    entity_id: sensor.car_battery_voltage
     below: 11.8
     for:
       minutes: 1
 action:
   - service: notify.persistent_notification
     data:
-      title: "🪫 Увага: Акумулятор Pajero розряджений"
-      message: "Напруга впала до {{ states('sensor.pajero_battery_voltage') }} В. Можливо, варто підзарядити АКБ."
+      title: "🪫 Увага: Акумулятор авто розряджений"
+      message: "Напруга впала до {{ states('sensor.car_battery_voltage') }} В. Можливо, варто підзарядити АКБ."
 ```
 
 ### 🌡️ Сповіщення: Перегрів двигуна
 ```yaml
-alias: "Pajero: Перегрів двигуна"
+alias: "Авто: Перегрів двигуна"
 trigger:
   - platform: numeric_state
-    entity_id: sensor.pajero_coolant_temp
+    entity_id: sensor.car_coolant_temp
     above: 105
 action:
   - service: notify.persistent_notification
     data:
       title: "🔥 УВАГА: Перегрів двигуна!"
-      message: "Температура ОР становить {{ states('sensor.pajero_coolant_temp') }}°C. Зупиніть рух та перевірте рівень рідини."
+      message: "Температура ОР становить {{ states('sensor.car_coolant_temp') }}°C. Зупиніть рух та перевірте рівень рідини."
 ```
 
 ---

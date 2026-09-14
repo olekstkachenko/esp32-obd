@@ -9,19 +9,19 @@
 #include "esp_bt_main.h"
 #include "esp_gap_bt_api.h"
 
-// --- WiFi Credentials ---
-const char* ssid = "Pajero";
-const char* password = "090384wifi";
+#if __has_include("secrets.h")
+  #include "secrets.h"
+#else
+  #include "secrets.example.h"
+#endif
 
-// --- Server Details ---
-const char* serverUrlBase = "https://mankind-comprised-devotion.ngrok-free.dev/api/obd";
-
-// --- ELM327 Bluetooth Target ---
-const char* elmName = "OBDII";
-const char* elmPin = "1234";
-
-// Target ELM327 MAC Address (Set your scanner MAC for instant direct connection)
-uint8_t elmMac[6] = {0x00, 0x00, 0x00, 0x33, 0x33, 0x33};
+// --- Configuration loaded from secrets.h (ignored in Git) ---
+const char* ssid = SECRET_WIFI_SSID;
+const char* password = SECRET_WIFI_PASSWORD;
+const char* serverUrlBase = SECRET_SERVER_URL;
+const char* elmName = SECRET_ELM_NAME;
+const char* elmPin = SECRET_ELM_PIN;
+uint8_t elmMac[6] = SECRET_ELM_MAC;
 
 // --- Forward Declarations ---
 void sendLog(String message, String level = "info", String bt_status = "");

@@ -1,12 +1,17 @@
-ARG BUILD_FROM=node:20-alpine
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-nodejs:20
 FROM ${BUILD_FROM}
 
-# Install necessary system utilities
+# Install necessary system utilities & build tools
 RUN apk add --no-cache \
+    nodejs \
+    npm \
     curl \
     jq \
     bash \
-    sqlite
+    sqlite \
+    python3 \
+    make \
+    g++
 
 # Create app directory
 WORKDIR /usr/src/app
@@ -19,7 +24,7 @@ ENV NODE_ENV=production
 COPY package*.json ./
 
 # Install production dependencies
-RUN npm ci --only=production
+RUN npm ci --only=production || npm install --omit=dev
 
 # Copy application source code
 COPY . .

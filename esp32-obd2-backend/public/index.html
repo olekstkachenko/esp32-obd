@@ -738,21 +738,25 @@
                         : '<span style="color:#f87171;">🔴 Офлайн</span>';
                 }
                 const diagIp = document.getElementById('diagIp');
-                if (diagIp) diagIp.innerText = status.ip || '--';
+                if (diagIp) diagIp.innerText = (isOnline && status.ip) ? status.ip : '--';
 
                 const diagRssi = document.getElementById('diagRssi');
-                if (diagRssi) diagRssi.innerText = status.rssi !== null && status.rssi !== undefined ? status.rssi : '--';
+                if (diagRssi) diagRssi.innerText = (isOnline && status.rssi !== null && status.rssi !== undefined) ? status.rssi : '--';
 
                 const diagBt = document.getElementById('diagBtStatus');
                 if (diagBt) {
-                    const bt = status.bt;
-                    if (bt === 'connected') diagBt.innerHTML = '<span style="color:#4ade80;">✓ Підключено</span>';
-                    else if (bt === 'connecting' || bt === 'scanning') diagBt.innerHTML = '<span style="color:#facc15;">⏳ Пошук...</span>';
-                    else diagBt.innerHTML = '<span style="color:#94a3b8;">Відключено</span>';
+                    if (isOnline) {
+                        const bt = status.bt;
+                        if (bt === 'connected') diagBt.innerHTML = '<span style="color:#4ade80;">✓ Підключено</span>';
+                        else if (bt === 'connecting' || bt === 'scanning') diagBt.innerHTML = '<span style="color:#facc15;">⏳ Пошук...</span>';
+                        else diagBt.innerHTML = '<span style="color:#94a3b8;">Відключено</span>';
+                    } else {
+                        diagBt.innerHTML = '<span style="color:#94a3b8;">Відключено</span>';
+                    }
                 }
 
                 const diagRam = document.getElementById('diagRam');
-                if (diagRam) diagRam.innerText = status.free_heap || '--';
+                if (diagRam) diagRam.innerText = (isOnline && status.free_heap) ? status.free_heap : '--';
 
                 const logCountEl = document.getElementById('diagLogCount');
                 if (logCountEl) logCountEl.innerText = `${data.logs ? data.logs.length : 0} записів`;

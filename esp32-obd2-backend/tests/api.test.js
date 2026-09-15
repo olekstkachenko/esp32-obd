@@ -179,7 +179,7 @@ test('10. Offline Device Timeout Check', async () => {
   const status = statusRes.body.status;
   
   // Calculate if device is offline (if last_seen is null or older than 35s)
-  const isOnline = status.last_seen && (Date.now() - new Date(status.last_seen).getTime() < 35000);
+  const isOnline = Boolean(status.last_seen && (Date.now() - new Date(status.last_seen).getTime() < 35000));
   assert.equal(typeof isOnline, 'boolean');
 });
 

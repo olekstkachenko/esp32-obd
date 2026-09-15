@@ -37,15 +37,35 @@ router.post('/device/log', (req, res) => {
 });
 
 router.get('/device/status', (req, res) => {
+  const now = Date.now();
+  const lastSeenMs = latestDeviceStatus.last_seen ? new Date(latestDeviceStatus.last_seen).getTime() : 0;
+  const isOnline = lastSeenMs > 0 && (now - lastSeenMs < 30000);
+
+  const cleanStatus = isOnline ? latestDeviceStatus : {
+    wifi: 'offline',
+    bt: 'disconnected',
+    ip: '--',
+    free_heap: '--',
+    rssi: null,
+    last_seen: null
+  };
+
   res.json({
-    status: latestDeviceStatus,
+    status: cleanStatus,
+    is_online: isOnline,
     logs: deviceLogs
   });
 });
 
 router.delete('/device/logs', (req, res) => {
   deviceLogs.length = 0;
-  res.json({ success: true, message: 'Logs cleared' });
+  latestDeviceStatus.wifi = 'unknown';
+  latestDeviceStatus.bt = 'disconnected';
+  latestDeviceStatus.ip = '--';
+  latestDeviceStatus.free_heap = '--';
+  latestDeviceStatus.rssi = null;
+  latestDeviceStatus.last_seen = null;
+  res.json({ success: true, message: 'Logs and diagnostics state cleared' });
 });
 
 // 2. Single OBD Record Ingestion from ESP32

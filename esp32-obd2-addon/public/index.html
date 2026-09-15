@@ -28,6 +28,9 @@
             <button class="nav-tab" id="tabTripsBtn" onclick="switchTab('trips')">
                 <span>📜</span> Архів
             </button>
+            <button class="nav-tab" id="tabAnalyticsBtn" onclick="switchTab('analytics')">
+                <span>📈</span> Аналітика
+            </button>
             <button class="nav-tab" id="tabGasBtn" onclick="switchTab('gas')">
                 <span>⛽</span> АЗС
             </button>
@@ -131,6 +134,113 @@
             
             <div id="tripsList" class="trips-container">
                 <!-- Trip cards inserted dynamically -->
+            </div>
+        </div>
+
+        <!-- ================= ANALYTICS VIEW ================= -->
+        <div id="viewAnalytics" style="display: none; flex-direction: column; gap: 20px;">
+            <!-- Period Filters & Export Bar -->
+            <div class="trips-header-bar" style="flex-wrap: wrap; gap: 10px;">
+                <div class="analytics-filter-group">
+                    <button class="period-btn" id="periodDay" onclick="setAnalyticsPeriod('today')">Сьогодні</button>
+                    <button class="period-btn" id="periodWeek" onclick="setAnalyticsPeriod('week')">Тиждень</button>
+                    <button class="period-btn active" id="periodMonth" onclick="setAnalyticsPeriod('month')">Місяць</button>
+                    <button class="period-btn" id="periodYear" onclick="setAnalyticsPeriod('year')">Рік</button>
+                    <button class="period-btn" id="periodAll" onclick="setAnalyticsPeriod('all')">Все</button>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-sm btn-primary" onclick="loadAnalytics()">🔄 Оновити</button>
+                    <button class="btn-sm" style="background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 0.85rem; padding: 6px 12px; cursor: pointer; display: flex; align-items: center; gap: 5px;" onclick="exportAnalyticsCsv()">
+                        📥 CSV
+                    </button>
+                </div>
+            </div>
+
+            <!-- KPI Summary Metric Cards (4 cards) -->
+            <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));">
+                <div class="metric-card glass-panel highlight-blue">
+                    <div class="metric-title">Загальний пробіг</div>
+                    <div class="metric-value"><span id="anTotalDist">--</span> <span class="unit">km</span></div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;" id="anTripsCount">-- поїздок</div>
+                </div>
+                <div class="metric-card glass-panel highlight-orange">
+                    <div class="metric-title">Спалене пальне</div>
+                    <div class="metric-value"><span id="anTotalFuel">--</span> <span class="unit">л</span></div>
+                    <div style="font-size: 0.75rem; color: #38bdf8; margin-top: 4px;" id="anAvgConsumption">-- л/100км</div>
+                </div>
+                <div class="metric-card glass-panel highlight-green">
+                    <div class="metric-title">Витрати на пальне</div>
+                    <div class="metric-value"><span id="anTotalCost">--</span> <span class="unit">₴</span></div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;" id="anFuelPriceRef">при 58.50 ₴/л</div>
+                </div>
+                <div class="metric-card glass-panel highlight-purple">
+                    <div class="metric-title">Час у дорозі</div>
+                    <div class="metric-value" style="font-size: 1.15rem;"><span id="anTotalDuration">--</span></div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;" id="anAvgSpeed">Сер. швидкість: -- km/h</div>
+                </div>
+            </div>
+
+            <!-- Chart: Mileage & Fuel Expenses Trend -->
+            <div class="chart-container glass-panel" style="height: 270px; padding: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-weight: 600; font-size: 0.95rem; color: #fff; display: flex; align-items: center; gap: 6px;">
+                        <span>📊</span> Динаміка пробігу та витрат (по днях)
+                    </span>
+                </div>
+                <canvas id="analyticsTrendChart"></canvas>
+            </div>
+
+            <!-- Driving Style Distribution & Records Grid -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
+                <!-- Driving Style Doughnut -->
+                <div class="glass-panel" style="padding: 16px;">
+                    <div style="font-weight: 600; font-size: 0.95rem; color: #fff; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+                        <span>🧭</span> Розподіл стилю їзди
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-around; gap: 15px; flex-wrap: wrap;">
+                        <div style="width: 140px; height: 140px; position: relative;">
+                            <canvas id="drivingStyleChart"></canvas>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.82rem;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #38bdf8;"></span>
+                                <span>Місто (&lt;50): <b id="styleCityVal" style="color:#fff;">0%</b></span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #a855f7;"></span>
+                                <span>Змішаний (50-80): <b id="styleMixedVal" style="color:#fff;">0%</b></span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #22c55e;"></span>
+                                <span>Траса (&gt;80): <b id="styleHighwayVal" style="color:#fff;">0%</b></span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: 0.75rem; margin-top: 4px;">
+                                <span>⏱️ Холостий хід: <b id="styleIdleVal" style="color:#e2e8f0;">0 хв</b></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Period Records & Extremums Card -->
+                <div class="glass-panel" style="padding: 16px; display: flex; flex-direction: column; justify-content: space-between;">
+                    <div style="font-weight: 600; font-size: 0.95rem; color: #fff; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+                        <span>🏆</span> Рекорди за період
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <div style="background: rgba(15, 23, 42, 0.6); padding: 10px 12px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-size: 0.85rem; color: #94a3b8;">🛣️ Найдовша поїздка</div>
+                            <div style="font-weight: 600; font-size: 0.95rem; color: #38bdf8;" id="recLongest">-- km</div>
+                        </div>
+                        <div style="background: rgba(15, 23, 42, 0.6); padding: 10px 12px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-size: 0.85rem; color: #94a3b8;">⚡ Макс. швидкість</div>
+                            <div style="font-weight: 600; font-size: 0.95rem; color: #f43f5e;" id="recFastest">-- km/h</div>
+                        </div>
+                        <div style="background: rgba(15, 23, 42, 0.6); padding: 10px 12px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-size: 0.85rem; color: #94a3b8;">⛽ Найекономічніша</div>
+                            <div style="font-weight: 600; font-size: 0.95rem; color: #22c55e;" id="recEconomical">-- л/100км</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -249,35 +359,47 @@
                     </div>
                 </div>
 
-                <!-- Interactive GPS Route Map -->
-                <div id="modalTripMapContainer" style="display: none; margin-top: 15px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
-                        <span style="font-weight: 600; font-size: 0.95rem; color: #fff; display: flex; align-items: center; gap: 6px;">
-                            <span>🗺️</span> Маршрут поїздки на карті
-                        </span>
-                        <div style="display: flex; gap: 8px;">
-                            <a id="btnModalGoogleMaps" href="#" target="_blank" class="btn-sm" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); text-decoration: none; display: inline-flex; align-items: center; gap: 5px; font-size: 0.8rem; padding: 5px 10px;">
-                                🌍 Google Maps
-                            </a>
-                            <button id="btnModalGpx" class="btn-sm" style="background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 0.8rem; padding: 5px 10px; cursor: pointer;">
-                                💾 GPX
-                            </button>
+                <!-- Modal Sub-Tabs -->
+                <div class="modal-nav-tabs">
+                    <button class="modal-nav-tab active" id="modalSubTabMapBtn" onclick="switchModalSubTab('map')">🗺️ Карта маршруту</button>
+                    <button class="modal-nav-tab" id="modalSubTabChartsBtn" onclick="switchModalSubTab('charts')">📈 Графіки телеметрії</button>
+                </div>
+
+                <!-- Section: Map -->
+                <div id="modalMapSection" style="display: block;">
+                    <!-- Interactive GPS Route Map -->
+                    <div id="modalTripMapContainer" style="display: none; margin-top: 15px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+                            <span style="font-weight: 600; font-size: 0.95rem; color: #fff; display: flex; align-items: center; gap: 6px;">
+                                <span>🗺️</span> Маршрут поїздки на карті
+                            </span>
+                            <div style="display: flex; gap: 8px;">
+                                <a id="btnModalGoogleMaps" href="#" target="_blank" class="btn-sm" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); text-decoration: none; display: inline-flex; align-items: center; gap: 5px; font-size: 0.8rem; padding: 5px 10px;">
+                                    🌍 Google Maps
+                                </a>
+                                <button id="btnModalGpx" class="btn-sm" style="background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 0.8rem; padding: 5px 10px; cursor: pointer;">
+                                    💾 GPX
+                                </button>
+                            </div>
                         </div>
+                        <div id="modalTripMap" style="height: 250px; width: 100%; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.15); z-index: 1;"></div>
                     </div>
-                    <div id="modalTripMap" style="height: 250px; width: 100%; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.15); z-index: 1;"></div>
+
+                    <!-- Fallback No GPS Banner -->
+                    <div id="modalNoGpsBanner" style="display: none; margin-top: 12px; padding: 16px; background: rgba(30, 41, 59, 0.45); border: 1px dashed rgba(255, 255, 255, 0.15); border-radius: 12px; font-size: 0.85rem; color: var(--text-secondary); text-align: center;">
+                        📡 GPS-трек відсутній для цієї поїздки (модуль GPS не був підключений)
+                    </div>
                 </div>
 
-                <!-- Fallback No GPS Banner -->
-                <div id="modalNoGpsBanner" style="display: none; margin-top: 12px; padding: 12px 16px; background: rgba(30, 41, 59, 0.45); border: 1px dashed rgba(255, 255, 255, 0.15); border-radius: 12px; font-size: 0.85rem; color: var(--text-secondary); text-align: center;">
-                    📡 GPS-трек відсутній для цієї поїздки (модуль GPS не був підключений)
-                </div>
+                <!-- Section: Telemetry Charts -->
+                <div id="modalChartsSection" style="display: none;">
+                    <div class="chart-container" style="height: 220px; margin-top: 15px;">
+                        <canvas id="modalSpeedChart"></canvas>
+                    </div>
 
-                <div class="chart-container" style="height: 220px; margin-top: 15px;">
-                    <canvas id="modalSpeedChart"></canvas>
-                </div>
-
-                <div class="chart-container" style="height: 220px;">
-                    <canvas id="modalRpmChart"></canvas>
+                    <div class="chart-container" style="height: 220px; margin-top: 15px;">
+                        <canvas id="modalRpmChart"></canvas>
+                    </div>
                 </div>
             </div>
         </div>
@@ -369,11 +491,13 @@
             currentTab = tab;
             document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
             document.getElementById('tabTripsBtn').classList.toggle('active', tab === 'trips');
+            document.getElementById('tabAnalyticsBtn').classList.toggle('active', tab === 'analytics');
             document.getElementById('tabGasBtn').classList.toggle('active', tab === 'gas');
             document.getElementById('tabDiagBtn').classList.toggle('active', tab === 'diag');
             
             document.getElementById('viewLive').style.display = tab === 'live' ? 'flex' : 'none';
             document.getElementById('viewTrips').style.display = tab === 'trips' ? 'flex' : 'none';
+            document.getElementById('viewAnalytics').style.display = tab === 'analytics' ? 'flex' : 'none';
             document.getElementById('viewGas').style.display = tab === 'gas' ? 'flex' : 'none';
             document.getElementById('viewDiag').style.display = tab === 'diag' ? 'flex' : 'none';
 
@@ -383,6 +507,8 @@
                 stopLiveTimers();
                 if (tab === 'trips') {
                     loadTrips();
+                } else if (tab === 'analytics') {
+                    loadAnalytics();
                 } else if (tab === 'gas') {
                     loadGasStations();
                 } else if (tab === 'diag') {
@@ -587,6 +713,7 @@
                 document.getElementById('modalTripCost').innerText = `${trip.trip_cost_uah || 0} ₴`;
 
                 document.getElementById('tripModal').style.display = 'flex';
+                switchModalSubTab('map');
 
                 // GPS Route Map Rendering
                 const gpsPoints = (records || []).filter(r => r.lat !== null && r.lon !== null && !isNaN(r.lat) && !isNaN(r.lon) && (r.lat !== 0 || r.lon !== 0));
@@ -920,6 +1047,175 @@
                     }
                 }
             } catch(err) {}
+        }
+
+        // ================= ANALYTICS JAVASCRIPT =================
+        let analyticsTrendChartInstance = null;
+        let drivingStyleChartInstance = null;
+        let currentAnalyticsPeriod = 'month';
+
+        function setAnalyticsPeriod(period) {
+            currentAnalyticsPeriod = period;
+            document.getElementById('periodDay').classList.toggle('active', period === 'today');
+            document.getElementById('periodWeek').classList.toggle('active', period === 'week');
+            document.getElementById('periodMonth').classList.toggle('active', period === 'month');
+            document.getElementById('periodYear').classList.toggle('active', period === 'year');
+            document.getElementById('periodAll').classList.toggle('active', period === 'all');
+            loadAnalytics();
+        }
+
+        async function loadAnalytics() {
+            try {
+                const res = await fetch(apiUrl(`api/analytics?period=${currentAnalyticsPeriod}`));
+                const data = await res.json();
+
+                const sum = data.summary || {};
+                document.getElementById('anTotalDist').innerText = Number(sum.total_distance_km || 0).toFixed(1);
+                document.getElementById('anTripsCount').innerText = `${sum.trips_count || 0} поїздок`;
+                document.getElementById('anTotalFuel').innerText = Number(sum.total_fuel_liters || 0).toFixed(1);
+                document.getElementById('anAvgConsumption').innerText = `${Number(sum.avg_consumption_l_100km || 0).toFixed(1)} л/100км`;
+                document.getElementById('anTotalCost').innerText = Number(sum.total_cost_uah || 0).toFixed(0);
+                document.getElementById('anFuelPriceRef').innerText = `при ${Number(data.fuel_price || 58.50).toFixed(2)} ₴/л`;
+                document.getElementById('anTotalDuration').innerText = formatDuration(sum.total_duration_seconds);
+                document.getElementById('anAvgSpeed').innerText = `Сер. швидкість: ${Math.round(sum.avg_speed || 0)} km/h`;
+
+                // Style percentages
+                const style = data.style_distribution || {};
+                document.getElementById('styleCityVal').innerText = `${style.city_pct || 0}%`;
+                document.getElementById('styleMixedVal').innerText = `${style.mixed_pct || 0}%`;
+                document.getElementById('styleHighwayVal').innerText = `${style.highway_pct || 0}%`;
+                document.getElementById('styleIdleVal').innerText = `${style.idle_minutes || 0} хв`;
+
+                // Records
+                const rec = data.records || {};
+                document.getElementById('recLongest').innerText = rec.longest ? `${rec.longest.distance_km} km` : '--';
+                document.getElementById('recFastest').innerText = rec.fastest ? `${rec.fastest.max_speed} km/h` : '--';
+                document.getElementById('recEconomical').innerText = rec.economical ? `${rec.economical.l_per_100km} л/100км` : '--';
+
+                // Trend Chart (Bar + Line for Distance and Cost)
+                const daily = data.daily || [];
+                const labels = daily.map(d => {
+                    const parts = d.date.split('-');
+                    return `${parts[2]}.${parts[1]}`;
+                });
+                const dists = daily.map(d => d.distance_km);
+                const costs = daily.map(d => d.cost_uah);
+
+                if (analyticsTrendChartInstance) {
+                    analyticsTrendChartInstance.destroy();
+                }
+
+                const ctxTrend = document.getElementById('analyticsTrendChart').getContext('2d');
+                analyticsTrendChartInstance = new Chart(ctxTrend, {
+                    type: 'bar',
+                    data: {
+                        labels: labels.length > 0 ? labels : ['Немає поїздок'],
+                        datasets: [
+                            {
+                                type: 'bar',
+                                label: 'Пробіг (км)',
+                                data: dists.length > 0 ? dists : [0],
+                                backgroundColor: 'rgba(56, 189, 248, 0.7)',
+                                borderColor: '#38bdf8',
+                                borderWidth: 1,
+                                borderRadius: 6,
+                                yAxisID: 'y'
+                            },
+                            {
+                                type: 'line',
+                                label: 'Витрати (грн)',
+                                data: costs.length > 0 ? costs : [0],
+                                borderColor: '#f43f5e',
+                                backgroundColor: 'rgba(244, 63, 94, 0.1)',
+                                tension: 0.35,
+                                fill: false,
+                                pointRadius: 4,
+                                pointBackgroundColor: '#f43f5e',
+                                yAxisID: 'y1'
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top',
+                                labels: { color: '#e2e8f0', boxWidth: 12, font: { size: 11 } }
+                            }
+                        },
+                        scales: {
+                            x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+                            y: {
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                                beginAtZero: true,
+                                grid: { color: 'rgba(255, 255, 255, 0.08)' },
+                                ticks: { color: '#38bdf8', font: { size: 10 } }
+                            },
+                            y1: {
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                beginAtZero: true,
+                                grid: { drawOnChartArea: false },
+                                ticks: { color: '#f43f5e', font: { size: 10 } }
+                            }
+                        }
+                    }
+                });
+
+                // Doughnut Chart (Driving Style)
+                if (drivingStyleChartInstance) {
+                    drivingStyleChartInstance.destroy();
+                }
+
+                const ctxStyle = document.getElementById('drivingStyleChart').getContext('2d');
+                const hasStyleData = (style.city_pct + style.mixed_pct + style.highway_pct) > 0;
+                drivingStyleChartInstance = new Chart(ctxStyle, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Місто', 'Змішаний', 'Траса'],
+                        datasets: [{
+                            data: hasStyleData ? [style.city_pct, style.mixed_pct, style.highway_pct] : [33, 33, 34],
+                            backgroundColor: hasStyleData 
+                                ? ['#38bdf8', '#a855f7', '#22c55e'] 
+                                : ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.1)', 'rgba(255,255,255,0.05)'],
+                            borderWidth: 0,
+                            hoverOffset: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        cutout: '72%',
+                        plugins: {
+                            legend: { display: false }
+                        }
+                    }
+                });
+
+            } catch (err) {
+                console.error('Failed to load analytics:', err);
+            }
+        }
+
+        function exportAnalyticsCsv() {
+            window.open(apiUrl(`api/analytics/export/csv?period=${currentAnalyticsPeriod}`), '_blank');
+        }
+
+        function switchModalSubTab(tab) {
+            document.getElementById('modalSubTabMapBtn').classList.toggle('active', tab === 'map');
+            document.getElementById('modalSubTabChartsBtn').classList.toggle('active', tab === 'charts');
+            
+            document.getElementById('modalMapSection').style.display = tab === 'map' ? 'block' : 'none';
+            document.getElementById('modalChartsSection').style.display = tab === 'charts' ? 'block' : 'none';
+
+            if (tab === 'map' && modalMapInstance) {
+                setTimeout(() => modalMapInstance.invalidateSize(), 150);
+            }
         }
 
         loadSettings();

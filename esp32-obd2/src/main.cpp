@@ -452,9 +452,12 @@ void checkWiFi() {
       wasWifiConnected = false;
       DEBUG_PORT.println("⚠️ Wi-Fi з'єднання втрачено (перехід в офлайн-буфер)!");
     }
-    if (millis() - lastWifiRetry > 6000) {
+    // Only attempt manual reconnect every 20 seconds (never interrupt active 4-way WPA2 handshakes)
+    if (millis() - lastWifiRetry > 20000) {
       lastWifiRetry = millis();
-      DEBUG_PORT.println("🔄 Спроба підключення до Wi-Fi точки Pajero...");
+      DEBUG_PORT.println("🔄 Спроба перепідключення до Wi-Fi точки Pajero...");
+      WiFi.disconnect();
+      delay(100);
       WiFi.begin(ssid, password);
     }
   }
@@ -487,15 +490,27 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
   
-  DEBUG_PORT.printf("📡 Ініціалізація Wi-Fi клієнта ('%s')...\n", ssid);
+  DEBUG_PORT.printf("📡 Підключення до Wi-Fi точки '%s'...\n", ssid);
   WiFi.begin(ssid, password);
 
-  // 2. Start Bluetooth Master immediately
+  // Give Wi-Fi a clean 4-second initial window to connect before Bluetooth activates
+  unsigned long startWifi = millis();
+  while (WiFi.status() != WL_CONNECTED && (millis() - startWifi < 4000)) {
+    delay(200);
+    DEBUG_PORT.print(".");
+  }
+  DEBUG_PORT.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    checkWiFi();
+  }
+
+  // 2. Start Bluetooth Master after Wi-Fi window
   SerialBT.setPin(elmPin);
   ELM_PORT.begin("ESP32-OBD2", true); // Master mode
   DEBUG_PORT.println("📡 Bluetooth Master готовий до з'єднання з 'OBDII'.");
   
-  sendLog("🚀 ESP32 успішно завантажено! Очікування старту Android точки доступу та сканера...", "info");
+  sendLog("🚀 ESP32 успішно завантажено! Очікування старту точки доступу та сканера...", "info");
 }
 
 void loop() {

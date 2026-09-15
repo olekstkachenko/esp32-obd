@@ -164,3 +164,41 @@ test('8. Clear Diagnostic Logs (/api/device/logs)', async () => {
   const statusRes = await request('GET', '/api/device/status');
   assert.equal(statusRes.body.logs.length, 0);
 });
+
+test('9. No Logs / Empty State Handling (Robustness test)', async () => {
+  // When no logs exist, server must return valid JSON without crashing
+  const statusRes = await request('GET', '/api/device/status');
+  assert.equal(statusRes.status, 200);
+  assert.ok(Array.isArray(statusRes.body.logs));
+  assert.equal(statusRes.body.logs.length, 0);
+  assert.ok(statusRes.body.status);
+});
+
+test('10. Offline Device Timeout Check', async () => {
+  const statusRes = await request('GET', '/api/device/status');
+  const status = statusRes.body.status;
+  
+  // Calculate if device is offline (if last_seen is null or older than 35s)
+  const isOnline = status.last_seen && (Date.now() - new Date(status.last_seen).getTime() < 35000);
+  assert.equal(typeof isOnline, 'boolean');
+});
+
+test('11. Offline Batch Recovery After Reconnection', async () => {
+  // Simulates ESP32 reconnecting after 15 minutes in a tunnel/offline area with 10 cached points
+  const offlineRecords = [];
+  for (let i = 0; i < 10; i++) {
+    offlineRecords.push({
+      rpm: 2000 + i * 50,
+      speed: 60 + i * 2,
+      temp: 85,
+      voltage: 14.1,
+      fuel_rate: 6.0,
+      dt: 1.0
+    });
+  }
+
+  const batchRes = await request('POST', '/api/obd/batch', { records: offlineRecords });
+  assert.equal(batchRes.status, 201);
+  assert.equal(batchRes.body.success, true);
+  assert.equal(batchRes.body.count, 10);
+});

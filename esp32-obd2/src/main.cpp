@@ -1,3 +1,8 @@
+// =========================================================================
+// 🚗 ESP32 OBD2 Telemetry Logger for Mitsubishi Pajero Wagon 4
+// 📡 Bluetooth ELM327 ("OBDII") -> ESP32 -> 4G Wi-Fi -> Home Assistant
+// =========================================================================
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -47,7 +52,7 @@ BluetoothSerial SerialBT;
 ELM327 myELM327;
 
 unsigned long lastUpdate = 0;
-const unsigned long updateInterval = 1000; // 1 second
+unsigned long updateInterval = 1000; // 1s active, 3s idle
 unsigned long lastWifiRetry = 0;
 unsigned long lastELMRetry = 0;
 unsigned long lastHeartbeat = 0;
@@ -62,7 +67,7 @@ struct OBDRecord {
 };
 
 std::vector<OBDRecord> telemetryBuffer;
-const size_t MAX_BUFFER_SIZE = 1800; // Store up to ~30 minutes of offline telemetry
+const size_t MAX_BUFFER_SIZE = 1800; // Store up to ~30 minutes of offline telemetry (RAM safe)
 
 struct LogEntry {
   String message;
@@ -100,12 +105,12 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
     }
 
     http.addHeader("Content-Type", "application/json");
-    http.addHeader("User-Agent", "ESP32-OBD2");
+    http.addHeader("User-Agent", "ESP32-OBD2-Pajero4");
     http.addHeader("ngrok-skip-browser-warning", "true");
 
     outCode = http.POST(jsonPayload);
-    DEBUG_PORT.printf("📡 [HTTP POST HTTPS] Code: %d (%s) | Free RAM: %d KB | URL: %s\n", 
-                      outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024), url.c_str());
+    DEBUG_PORT.printf("📡 [HTTP HTTPS] Code: %d (%s) | Free RAM: %d KB\n", 
+                      outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024));
     http.end();
   } else {
     WiFiClient client;
@@ -118,11 +123,11 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
     }
 
     http.addHeader("Content-Type", "application/json");
-    http.addHeader("User-Agent", "ESP32-OBD2");
+    http.addHeader("User-Agent", "ESP32-OBD2-Pajero4");
     http.addHeader("ngrok-skip-browser-warning", "true");
 
     outCode = http.POST(jsonPayload);
-    DEBUG_PORT.printf("📡 [HTTP POST Plain] Code: %d (%s) | Free RAM: %d KB\n", 
+    DEBUG_PORT.printf("📡 [HTTP Plain] Code: %d (%s) | Free RAM: %d KB\n", 
                       outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024));
     http.end();
   }
@@ -238,10 +243,10 @@ void flushBufferToServer() {
   int httpCode = 0;
   bool ok = sendHttpPost(url, jsonPayload, httpCode);
   if (ok) {
-    DEBUG_PORT.printf("✅ Flushed %d offline records to server (HTTP %d)\n", (int)telemetryBuffer.size(), httpCode);
+    DEBUG_PORT.printf("✅ [Buffer Sync] Відправлено %d записів на сервер (HTTP %d)\n", (int)telemetryBuffer.size(), httpCode);
     telemetryBuffer.clear();
   } else {
-    DEBUG_PORT.printf("⚠️ Sync failed (HTTP %d). Buffer: %d records\n", httpCode, (int)telemetryBuffer.size());
+    DEBUG_PORT.printf("⚠️ [Buffer Sync] Збій синхронізації (HTTP %d). Буфер: %d записів\n", httpCode, (int)telemetryBuffer.size());
   }
 }
 
@@ -262,7 +267,7 @@ bool connectToELM327() {
   clearBluetoothBonds();
   sendLog("🎬 Перевірка Bluetooth. Вільна пам'ять RAM: " + String(ESP.getFreeHeap() / 1024) + " KB", "info", "connecting");
 
-  // Step 1: Fast direct connection by target name "OBDII" (Saves RAM, 0ms scan delay)
+  // Крок 1: Пряме швидке підключення до імені "OBDII" (PIN: 1234)
   sendLog("📡 [1/2] Пряме з'єднання з сканером '" + String(elmName) + "' (PIN '" + String(elmPin) + "')...", "info", "connecting");
   SerialBT.setPin(elmPin);
   if (SerialBT.connect(elmName)) {
@@ -271,12 +276,12 @@ bool connectToELM327() {
   }
   DEBUG_PORT.println("⚠️ Direct name connection timed out.");
 
-  // Step 2: Connection by MAC if provided
+  // Крок 2: Підключення за MAC (якщо вказано)
   bool validMac = !isDummyMac(elmMac);
   if (validMac) {
     char macStr[18];
     snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", elmMac[0], elmMac[1], elmMac[2], elmMac[3], elmMac[4], elmMac[5]);
-    sendLog("📡 Спроба з'єднання за MAC-адресою: " + String(macStr) + "...", "info", "connecting");
+    sendLog("📡 Спроба з'єднання за MAC: " + String(macStr) + "...", "info", "connecting");
     
     SerialBT.setPin(elmPin);
     if (SerialBT.connect(elmMac)) {
@@ -285,23 +290,22 @@ bool connectToELM327() {
     }
   }
 
-  // Step 3: Periodic Bluetooth Inquiry Scan (every 25s only)
+  // Крок 3: Періодичне сканування ефіру (раз на 25 секунд)
   static unsigned long lastScanTime = 0;
   if (millis() - lastScanTime > 25000) {
     lastScanTime = millis();
-    sendLog("🔎 [2/2] Сканування Bluetooth-ефіру навколо...", "info", "scanning");
+    sendLog("🔎 [2/2] Автосканування Bluetooth-ефіру...", "info", "scanning");
 
     BTScanResults *pResults = SerialBT.getScanResults();
     if (SerialBT.discover(3000)) {
       pResults = SerialBT.getScanResults();
       int count = pResults ? pResults->getCount() : 0;
-      sendLog("📡 Знайдено " + String(count) + " пристроїв у зоні дії Bluetooth", "info", "scanning");
+      sendLog("📡 Знайдено " + String(count) + " пристроїв Bluetooth", "info", "scanning");
 
       for (int i = 0; i < count; i++) {
         BTAdvertisedDevice *dev = pResults->getDevice(i);
         String devName = String(dev->getName().c_str());
         String devAddr = String(dev->getAddress().toString().c_str());
-        int rssi = dev->getRSSI();
 
         String lowerName = devName;
         lowerName.toLowerCase();
@@ -333,7 +337,7 @@ String getELMStatusStr(int8_t status) {
     case ELM_NO_DATA: return "NO_DATA (ЕБУ авто не підтримує даний PID)";
     case ELM_STOPPED: return "STOPPED";
     case ELM_TIMEOUT: return "TIMEOUT (Таймаут відповіді від ЕБУ)";
-    default: return "ERROR_CODE_" + String(status);
+    default: return "STATUS_CODE_" + String(status);
   }
 }
 
@@ -352,12 +356,12 @@ void ensureELMConnected() {
   }
 
   if (elmConnected && !elmInitialized) {
-    sendLog("⚙️ Bluetooth з'єднання є! Ініціалізуємо протокол ELM327 (AT-команди, пошук шини авто)...", "info", "connecting");
-    if (myELM327.begin(ELM_PORT, false, 3000)) {
-      sendLog("🚀 УСПІХ! Протокол ELM327 успішно ініціалізовано! Почався збір даних телеметрії.", "success", "connected");
+    sendLog("⚙️ Bluetooth з'єднання є! Ініціалізуємо протокол Pajero 4 CAN...", "info", "connecting");
+    if (myELM327.begin(ELM_PORT, false, 2500)) {
+      sendLog("🚀 УСПІХ! Протокол ELM327 зв'язано з ЕБУ Pajero 4! Почався збір даних.", "success", "connected");
       elmInitialized = true;
     } else {
-      sendLog("⚠️ Bluetooth з'єднано, але сканер не відповів на протокол ELM327 (" + getELMStatusStr(myELM327.nb_rx_state) + ")", "warn", "connecting");
+      sendLog("⚠️ Bluetooth з'єднано, але ЕБУ ще не відповів (" + getELMStatusStr(myELM327.nb_rx_state) + ")", "warn", "connecting");
     }
   }
 }
@@ -371,7 +375,7 @@ void checkWiFi() {
       String ip = WiFi.localIP().toString();
       int rssi = WiFi.RSSI();
       DEBUG_PORT.printf("\n========================================\n");
-      DEBUG_PORT.printf("🌐 Wi-Fi ПІДКЛЮЧЕНО!\n");
+      DEBUG_PORT.printf("🌐 Wi-Fi ПІДКЛЮЧЕНО (Магнітола Pajero)!\n");
       DEBUG_PORT.printf("IP: %s | RSSI: %d dBm | Free Heap: %d KB\n", ip.c_str(), rssi, (int)(ESP.getFreeHeap() / 1024));
       DEBUG_PORT.printf("========================================\n");
       
@@ -380,15 +384,16 @@ void checkWiFi() {
 
       sendLog("🌐 Wi-Fi підключено до '" + String(ssid) + "'! IP: " + ip + " (RSSI: " + String(rssi) + " dBm)", "success", "wifi_connected");
       flushLogsToServer();
+      flushBufferToServer(); // Immediately flush any records saved during Android 15s boot
     }
   } else {
     if (wasWifiConnected) {
       wasWifiConnected = false;
-      DEBUG_PORT.println("⚠️ Wi-Fi з'єднання втрачено!");
+      DEBUG_PORT.println("⚠️ Wi-Fi з'єднання втрачено (перехід в офлайн-буфер)!");
     }
-    if (millis() - lastWifiRetry > 8000) {
+    if (millis() - lastWifiRetry > 6000) {
       lastWifiRetry = millis();
-      DEBUG_PORT.println("🔄 Спроба підключення до Wi-Fi...");
+      DEBUG_PORT.println("🔄 Спроба підключення до Wi-Fi точки Pajero...");
       WiFi.begin(ssid, password);
     }
   }
@@ -396,46 +401,36 @@ void checkWiFi() {
 
 void setup() {
   DEBUG_PORT.begin(115200);
-  delay(500);
+  delay(300);
 
   DEBUG_PORT.println("\n\n========================================");
-  DEBUG_PORT.println("🚗 ESP32 OBD2 Telemetry Logger Starting...");
+  DEBUG_PORT.println("🚗 ESP32 Pajero 4 OBD2 Telemetry Logger");
   DEBUG_PORT.printf("Free Heap: %d KB\n", (int)(ESP.getFreeHeap() / 1024));
   DEBUG_PORT.println("========================================");
 
   telemetryBuffer.reserve(MAX_BUFFER_SIZE);
   logQueue.reserve(64);
 
-  // 1. Configure reliable Google & Cloudflare DNS (Bypasses restricted mobile carrier DNS)
+  // 1. Google & Cloudflare DNS (Bypasses restricted mobile carrier DNS on Android hotspot)
   IPAddress dns1(8, 8, 8, 8);
   IPAddress dns2(1, 1, 1, 1);
   WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, dns1, dns2);
 
-  // 2. Prioritize Wi-Fi connection to mobile hotspot
+  // 2. Non-blocking Wi-Fi initial start (Does not freeze boot while Android headunit loads)
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  DEBUG_PORT.printf("Connecting to Mobile Hotspot '%s'...\n", ssid);
+  DEBUG_PORT.printf("📡 Ініціалізація Wi-Fi клієнта ('%s')...\n", ssid);
 
-  unsigned long startWait = millis();
-  while (WiFi.status() != WL_CONNECTED && (millis() - startWait < 4000)) {
-    delay(200);
-    DEBUG_PORT.print(".");
-  }
-  DEBUG_PORT.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    checkWiFi();
-  }
-
-  // 3. Start Bluetooth Master
-  sendLog("🚀 ESP32 завантажено! Запуск Bluetooth Master...", "info");
+  // 3. Start Bluetooth Master immediately
   SerialBT.setPin(elmPin);
   ELM_PORT.begin("ESP32-OBD2", true); // Master mode
-  DEBUG_PORT.println("📡 Bluetooth Master mode ready.");
+  DEBUG_PORT.println("📡 Bluetooth Master готовий до з'єднання з 'OBDII'.");
+  
+  sendLog("🚀 ESP32 успішно завантажено! Очікування старту Android точки доступу та сканера...", "info");
 }
 
 void loop() {
-  // 1. Monitor Wi-Fi state & handle reconnects
+  // 1. Monitor Wi-Fi state & handle non-blocking auto-reconnects
   checkWiFi();
 
   // 2. Periodic log flushing (every 2.5 seconds)
@@ -457,7 +452,7 @@ void loop() {
   // 5. Query OBD2 telemetry if connected
   if (elmInitialized && SerialBT.connected()) {
     if (millis() - lastUpdate > updateInterval) {
-      float dt = (millis() - lastUpdate) / 1000.0;
+      float dt = (lastUpdate > 0) ? ((millis() - lastUpdate) / 1000.0) : 1.0;
       lastUpdate = millis();
 
       float volt = myELM327.batteryVoltage();
@@ -467,19 +462,24 @@ void loop() {
       float maf = myELM327.mafRate();
 
       static int consecutiveErrors = 0;
+      static bool engineRunning = false;
 
+      // Handle Engine Off / Sleep on Blue ELM327
       if (myELM327.nb_rx_state != ELM_SUCCESS && (isnan(rpm) || rpm <= 0) && (isnan(volt) || volt <= 0)) {
         consecutiveErrors++;
-        if (consecutiveErrors % 5 == 0) {
-          sendLog("⚠️ Збій зчитування з авто: " + getELMStatusStr(myELM327.nb_rx_state) + " (Спроб: " + String(consecutiveErrors) + ")", "warn", "connected");
+        updateInterval = 3000; // Throttle polling to 3s when engine is OFF to save car battery
+        
+        if (consecutiveErrors == 3) {
+          sendLog("💤 Запалювання вимкнено (очікування старту двигуна Pajero 4)...", "info", "engine_off");
         }
-        if (consecutiveErrors >= 15) {
-          sendLog("🔄 Занадто багато помилок зчитування від ЕБУ авто. Перезапуск протоколу ELM327...", "warn", "connecting");
+        if (consecutiveErrors >= 20) {
+          sendLog("🔄 Переініціалізація протоколу ELM327...", "warn", "connecting");
           elmInitialized = false;
           consecutiveErrors = 0;
         }
       } else {
         consecutiveErrors = 0;
+        updateInterval = 1000; // Normal 1-second active telemetry rate
       }
 
       if (isnan(volt) || volt < 0 || volt > 30.0) volt = 0;
@@ -488,12 +488,20 @@ void loop() {
       if (isnan(temp) || temp < -40 || temp > 200) temp = 0;
       if (isnan(maf) || maf < 0) maf = 0;
 
-      float fuel_rate = (maf > 0) ? (maf * 3600.0 / 14.7 / 717.0) : 0;
+      // Fuel consumption for Gasoline (14.7:1 AFR, density ~720 g/L)
+      float fuel_rate = (maf > 0) ? (maf * 3600.0 / 14.7 / 720.0) : 0;
+
+      if (rpm > 400 || volt > 13.0) {
+        engineRunning = true;
+      } else if (rpm == 0 && volt > 0 && volt < 12.8) {
+        engineRunning = false;
+      }
 
       if (volt > 0 || rpm > 0 || speed > 0 || temp > 0 || myELM327.nb_rx_state == ELM_SUCCESS) {
         DEBUG_PORT.printf("✅ DATA: RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
                           rpm, speed, temp, volt, fuel_rate, (int)telemetryBuffer.size());
         
+        // Save to offline buffer (will be flushed when Android Wi-Fi connects)
         if (telemetryBuffer.size() >= MAX_BUFFER_SIZE) {
           telemetryBuffer.erase(telemetryBuffer.begin());
         }

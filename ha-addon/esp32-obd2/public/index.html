@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>OBD2 Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="index.css?v=1.2.6">
+    <link rel="stylesheet" href="index.css?v=1.2.7">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -37,8 +37,8 @@
         <!-- Fuel Price Setting Widget -->
         <div class="fuel-price-bar">
             <div class="fuel-price-info">
-                <span>⛽</span>
-                <span>Ціна бензину <b>А-95</b>:</span>
+                <span style="font-size: 1.2rem;">⛽</span>
+                <span style="color: #f8fafc; font-weight: 600; font-size: 0.95rem;">Ціна бензину <b style="color: #38bdf8; font-weight: 700;">А-95</b>:</span>
             </div>
             <div class="fuel-price-input-wrapper">
                 <input type="number" step="0.1" id="globalFuelPriceInput" class="fuel-price-input" value="58.50" onchange="saveFuelPrice()">
@@ -269,6 +269,9 @@
 
         Chart.defaults.color = 'rgba(255, 255, 255, 0.7)';
         Chart.defaults.font.family = "'Outfit', sans-serif";
+        if (Chart.defaults.plugins && Chart.defaults.plugins.legend) {
+            Chart.defaults.plugins.legend.display = false;
+        }
         const commonOptions = {
             responsive: true, maintainAspectRatio: false,
             plugins: { legend: { display: false } },
@@ -283,15 +286,27 @@
         const ctxSpeed = document.getElementById('speedChart').getContext('2d');
         const speedChart = new Chart(ctxSpeed, {
             type: 'line',
-            data: { labels: [], datasets: [{ data: [], borderColor: '#36a2eb', borderWidth: 2, tension: 0.4, fill: true, backgroundColor: 'rgba(54, 162, 235, 0.1)' }] },
-            options: { ...commonOptions, plugins: { title: { display: true, text: 'Швидкість (Live Timeline)', color: '#fff' } } }
+            data: { labels: [], datasets: [{ label: 'Швидкість (km/h)', data: [], borderColor: '#36a2eb', borderWidth: 2, tension: 0.4, fill: true, backgroundColor: 'rgba(54, 162, 235, 0.1)' }] },
+            options: { 
+                ...commonOptions, 
+                plugins: { 
+                    legend: { display: false },
+                    title: { display: true, text: 'Швидкість (Live Timeline)', color: '#fff' } 
+                } 
+            }
         });
 
         const ctxRpm = document.getElementById('rpmChart').getContext('2d');
         const rpmChart = new Chart(ctxRpm, {
             type: 'line',
-            data: { labels: [], datasets: [{ data: [], borderColor: '#ff6384', borderWidth: 2, tension: 0.4, fill: true, backgroundColor: 'rgba(255, 99, 132, 0.1)' }] },
-            options: { ...commonOptions, plugins: { title: { display: true, text: 'Оберти двигуна RPM (Live Timeline)', color: '#fff' } } }
+            data: { labels: [], datasets: [{ label: 'Оберти двигуна (RPM)', data: [], borderColor: '#ff6384', borderWidth: 2, tension: 0.4, fill: true, backgroundColor: 'rgba(255, 99, 132, 0.1)' }] },
+            options: { 
+                ...commonOptions, 
+                plugins: { 
+                    legend: { display: false },
+                    title: { display: true, text: 'Оберти двигуна RPM (Live Timeline)', color: '#fff' } 
+                } 
+            }
         });
 
         // Modal Charts
@@ -301,11 +316,11 @@
         function startLiveTimers() {
             if (!liveTimer1) {
                 fetchLatest();
-                liveTimer1 = setInterval(fetchLatest, 2000);
+                liveTimer1 = setInterval(fetchLatest, 800); // 0.8s Ultra-Fast Live Refresh
             }
             if (!liveTimer2) {
                 fetchHistory();
-                liveTimer2 = setInterval(fetchHistory, 5000);
+                liveTimer2 = setInterval(fetchHistory, 2000); // 2s Timeline Chart Refresh
             }
         }
 
@@ -363,6 +378,9 @@
                     body: JSON.stringify({ fuel_price: inputVal })
                 });
                 if (currentTab === 'trips') loadTrips();
+            } catch (err) {}
+        }
+
         async function resetAllData() {
             if (!confirm('Очистити всі тестові записи, історію поїздок та логи з бази?')) return;
             try {
@@ -544,15 +562,15 @@
                 const ctxM1 = document.getElementById('modalSpeedChart').getContext('2d');
                 modalSpeedChartInstance = new Chart(ctxM1, {
                     type: 'line',
-                    data: { labels, datasets: [{ data: speeds, borderColor: '#36a2eb', borderWidth: 2, tension: 0.3, fill: true, backgroundColor: 'rgba(54, 162, 235, 0.15)' }] },
-                    options: { ...commonOptions, plugins: { title: { display: true, text: 'Графік швидкості (km/h)', color: '#fff' } } }
+                    data: { labels, datasets: [{ label: 'Швидкість (km/h)', data: speeds, borderColor: '#36a2eb', borderWidth: 2, tension: 0.3, fill: true, backgroundColor: 'rgba(54, 162, 235, 0.15)' }] },
+                    options: { ...commonOptions, plugins: { legend: { display: false }, title: { display: true, text: 'Графік швидкості (km/h)', color: '#fff' } } }
                 });
 
                 const ctxM2 = document.getElementById('modalRpmChart').getContext('2d');
                 modalRpmChartInstance = new Chart(ctxM2, {
                     type: 'line',
-                    data: { labels, datasets: [{ data: rpms, borderColor: '#ff6384', borderWidth: 2, tension: 0.3, fill: true, backgroundColor: 'rgba(255, 99, 132, 0.15)' }] },
-                    options: { ...commonOptions, plugins: { title: { display: true, text: 'Графік обертів RPM', color: '#fff' } } }
+                    data: { labels, datasets: [{ label: 'Оберти двигуна (RPM)', data: rpms, borderColor: '#ff6384', borderWidth: 2, tension: 0.3, fill: true, backgroundColor: 'rgba(255, 99, 132, 0.15)' }] },
+                    options: { ...commonOptions, plugins: { legend: { display: false }, title: { display: true, text: 'Графік обертів RPM', color: '#fff' } } }
                 });
             } catch (err) {
                 alert('Не вдалося завантажити деталі поїздки');

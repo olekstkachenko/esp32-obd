@@ -145,6 +145,8 @@ bool elmInitialized = false;
 #include "esp_http_client.h"
 #include "roots.h"
 
+volatile bool isBtConnecting = false;
+
 // =========================================================================
 // 🚀 Dual-Mode High-Speed HTTP/HTTPS POST Handler
 // =========================================================================
@@ -156,41 +158,36 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
 
   bool isHttps = url.startsWith("https://");
 
-  if (isHttps) {
-    esp_http_client_config_t config = {};
-    config.url = url.c_str();
-    config.timeout_ms = 8000;
-    config.cert_pem = NGROK_ROOT_CA;
-    config.skip_cert_common_name_check = true;
-    config.buffer_size = 1024;
-    config.buffer_size_tx = 1024;
-    config.is_async = false;
+  // Prevent RAM collision ONLY for heavy HTTPS if Bluetooth is negotiating connection
+  if (isHttps && (isBtConnecting || ESP.getFreeHeap() < 24000)) {
+    DEBUG_PORT.printf("⏳ [HTTP Deferred] BT Connecting (%d) | Free Heap: %d KB\n", isBtConnecting, (int)(ESP.getFreeHeap() / 1024));
+    outCode = -2;
+    return false;
+  }
 
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) {
-      DEBUG_PORT.printf("❌ [HTTP HTTPS] Init failed for: %s | Free RAM: %d KB\n", url.c_str(), (int)(ESP.getFreeHeap() / 1024));
+  if (isHttps) {
+    WiFiClientSecure secClient;
+    secClient.setInsecure();
+    secClient.setTimeout(8000);
+
+    HTTPClient http;
+    http.setTimeout(8000);
+    http.setReuse(false);
+
+    if (!http.begin(secClient, url)) {
+      DEBUG_PORT.printf("❌ [HTTP HTTPS] begin failed for: %s | Free RAM: %d KB\n", url.c_str(), (int)(ESP.getFreeHeap() / 1024));
       outCode = -1;
       return false;
     }
 
-    esp_http_client_set_method(client, HTTP_METHOD_POST);
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_header(client, "User-Agent", "ESP32-OBD2-Pajero4");
-    esp_http_client_set_header(client, "ngrok-skip-browser-warning", "true");
-    esp_http_client_set_post_field(client, jsonPayload.c_str(), jsonPayload.length());
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("User-Agent", "ESP32-OBD2-Pajero4");
+    http.addHeader("ngrok-skip-browser-warning", "true");
 
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-      outCode = esp_http_client_get_status_code(client);
-      DEBUG_PORT.printf("📡 [HTTP HTTPS] Code: %d | Free RAM: %d KB (MaxBlock: %d KB)\n", 
-                        outCode, (int)(ESP.getFreeHeap() / 1024), (int)(ESP.getMaxAllocHeap() / 1024));
-    } else {
-      outCode = -1;
-      DEBUG_PORT.printf("❌ [HTTP HTTPS] Error: %s (%d) | Free RAM: %d KB (MaxBlock: %d KB)\n", 
-                        esp_err_to_name(err), err, (int)(ESP.getFreeHeap() / 1024), (int)(ESP.getMaxAllocHeap() / 1024));
-    }
-
-    esp_http_client_cleanup(client);
+    outCode = http.POST(jsonPayload);
+    DEBUG_PORT.printf("📡 [HTTP HTTPS] Code: %d (%s) | Free RAM: %d KB (MaxBlock: %d KB)\n", 
+                      outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024), (int)(ESP.getMaxAllocHeap() / 1024));
+    http.end();
   } else {
     // Ultra-Fast Plain HTTP for In-Car Hotspot Local Connection (0 KB Crypto Overhead!)
     HTTPClient http;
@@ -206,8 +203,10 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
       return false;
     }
 
+    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", "ESP32-OBD2-Pajero4");
+    http.addHeader("ngrok-skip-browser-warning", "true");
 
     outCode = http.POST(jsonPayload);
     DEBUG_PORT.printf("📡 [HTTP Plain] Code: %d (%s) | Free RAM: %d KB (MaxBlock: %d KB)\n", 
@@ -391,6 +390,7 @@ static unsigned long lastHeartbeat = 0;
 
 void networkTask(void *pvParameters) {
   DEBUG_PORT.printf("🌐 [Core 0] Network Task запущено на ядрі %d\n", xPortGetCoreID());
+  vTaskDelay(pdMS_TO_TICKS(3000));
 
   for (;;) {
     // 1. Wi-Fi Connection Management
@@ -423,20 +423,20 @@ void networkTask(void *pvParameters) {
       }
     }
 
-    // 2. Periodic Log Flushing (every 2.5s)
-    if (WiFi.status() == WL_CONNECTED && (millis() - lastLogFlush > 2500)) {
+    // 2. High-Speed Periodic Telemetry & Log Flushing (every 500ms)
+    if (WiFi.status() == WL_CONNECTED && (millis() - lastLogFlush > 500)) {
       lastLogFlush = millis();
       flushLogsToServer();
       flushBufferToServer();
     }
 
-    // 3. Heartbeat (every 8s)
-    if (WiFi.status() == WL_CONNECTED && (millis() - lastHeartbeat > 8000)) {
+    // 3. Heartbeat (every 3s to maintain continuous Online status)
+    if (WiFi.status() == WL_CONNECTED && (millis() - lastHeartbeat > 3000)) {
       lastHeartbeat = millis();
       sendHeartbeat();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
@@ -454,6 +454,7 @@ const char* targetNames[] = {"OBDII", "OBD2", "ELM327", "vLinker", "Viecar", "OB
 const char* pins[] = {"1234", "0000", "6789", "1111", "8888", "123456", ""};
 
 bool connectToELM327() {
+  isBtConnecting = true;
   clearBluetoothBonds();
   sendLog("🎬 Перевірка Bluetooth. Вільна пам'ять RAM: " + String(ESP.getFreeHeap() / 1024) + " KB", "info", "connecting");
 
@@ -462,6 +463,7 @@ bool connectToELM327() {
   SerialBT.setPin(elmPin);
   if (SerialBT.connect(elmName)) {
     sendLog("🎉 УСПІХ! З'єднано по Bluetooth з сканером '" + String(elmName) + "'!", "success", "connected");
+    isBtConnecting = false;
     return true;
   }
   DEBUG_PORT.println("⚠️ Direct name connection timed out.");
@@ -476,6 +478,7 @@ bool connectToELM327() {
     SerialBT.setPin(elmPin);
     if (SerialBT.connect(elmMac)) {
       sendLog("🎉 УСПІХ! З'єднано по Bluetooth з MAC [" + String(macStr) + "]!", "success", "connected");
+      isBtConnecting = false;
       return true;
     }
   }
@@ -506,6 +509,7 @@ bool connectToELM327() {
             SerialBT.setPin(p);
             if (SerialBT.connect(dev->getAddress())) {
               sendLog("🎉 УСПІХ! З'єднано з '" + devName + "' [" + devAddr + "]!", "success", "connected");
+              isBtConnecting = false;
               return true;
             }
           }
@@ -514,6 +518,7 @@ bool connectToELM327() {
     }
   }
 
+  isBtConnecting = false;
   return false;
 }
 
@@ -572,10 +577,6 @@ void setup() {
   DEBUG_PORT.begin(115200);
   delay(300);
 
-  // CRITICAL: Release BLE controller RAM before starting Bluetooth Classic!
-  // This frees ~30 KB of contiguous internal SRAM for MbedTLS TLS SSL handshakes.
-  esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
-
   dataMutex = xSemaphoreCreateMutex();
 
   initSpiffsLogging();
@@ -592,8 +593,8 @@ void setup() {
   DEBUG_PORT.println("💡 Введіть 'DUMP' у Serial для вивантаження логу з Flash-пам'яті");
   DEBUG_PORT.println("========================================");
 
-  telemetryBuffer.reserve(50);
-  logQueue.reserve(15);
+  telemetryBuffer.reserve(30);
+  logQueue.reserve(10);
 
   // 1. Start Bluetooth Master (Must be started before Wi-Fi for RF coexistence coex_enable)
   if (ELM_PORT.begin("ESP32-OBD2", true)) {
@@ -616,7 +617,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     networkTask,
     "NetworkTask",
-    6144,
+    4096,
     NULL,
     1,
     NULL,
@@ -692,7 +693,7 @@ void loop() {
         }
       } else {
         consecutiveErrors = 0;
-        updateInterval = 1000; // Normal 1-second active telemetry rate
+        updateInterval = 500; // Ultra-Fast 0.5-second active telemetry rate
       }
 
       if (isnan(volt) || volt < 0 || volt > 30.0) volt = 0;

@@ -444,8 +444,17 @@ h1 {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     font-weight: 500;
+    color: #f8fafc !important;
+}
+
+.fuel-price-info span {
+    color: #f8fafc !important;
+}
+
+.fuel-price-info b {
+    color: #38bdf8 !important;
 }
 
 .fuel-price-input-wrapper {

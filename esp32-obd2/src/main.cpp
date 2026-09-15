@@ -13,7 +13,6 @@
 #include <time.h>
 #include <FS.h>
 #include <SPIFFS.h>
-#include <TinyGPSPlus.h>
 
 #include "esp_bt.h"
 #include "esp_bt_main.h"
@@ -29,7 +28,14 @@ BluetoothSerial SerialBT;
 #define ELM_PORT SerialBT
 #define DEBUG_PORT Serial
 
-// --- Hardware GPS Module (UART2: GPIO 16 RX, GPIO 17 TX) ---
+// =========================================================================
+// 🛰️ GPS Module Support (UART2: GPIO 16 RX, GPIO 17 TX @ 9600 baud)
+// Щоб увімкнути GPS — просто розкоментуйте рядок нижче:
+// =========================================================================
+// #define ENABLE_GPS 1
+
+#ifdef ENABLE_GPS
+#include <TinyGPSPlus.h>
 #define GPS_RX_PIN 16
 #define GPS_TX_PIN 17
 #define GPS_BAUD 9600
@@ -41,6 +47,7 @@ void readGps() {
     gps.encode(GPS_SERIAL.read());
   }
 }
+#endif
 
 // --- Configuration loaded from secrets.h (ignored in Git) ---
 const char* ssid = SECRET_WIFI_SSID;
@@ -656,16 +663,20 @@ void setup() {
     0 // Core 0
   );
   
+#ifdef ENABLE_GPS
   // 4. Start Hardware GPS Module on UART2 (GPIO 16 RX, GPIO 17 TX)
   GPS_SERIAL.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   DEBUG_PORT.println("🛰️ GPS UART2 ініціалізовано (GPIO 16 RX, GPIO 17 TX @ 9600)");
+#endif
 
   sendLog("🚀 ESP32 успішно завантажено! Очікування старту точки доступу та сканера...", "info");
 }
 
 void loop() {
+#ifdef ENABLE_GPS
   // Continuous non-blocking NMEA GPS parser
   readGps();
+#endif
 
   // 0. Process USB Serial debug commands ('DUMP', 'CLEAR', 'STATUS', 'REBOOT', 'HELP')
   if (DEBUG_PORT.available()) {
@@ -682,7 +693,11 @@ void loop() {
       DEBUG_PORT.printf("Free Heap: %d KB\n", (int)(ESP.getFreeHeap() / 1024));
       DEBUG_PORT.printf("Wi-Fi: %s (IP: %s | RSSI: %d dBm)\n", (WiFi.status() == WL_CONNECTED ? "CONNECTED" : "OFFLINE"), WiFi.localIP().toString().c_str(), WiFi.RSSI());
       DEBUG_PORT.printf("Bluetooth: %s | ELM Init: %s\n", (SerialBT.connected() ? "CONNECTED" : "DISCONNECTED"), (elmInitialized ? "YES" : "NO"));
+#ifdef ENABLE_GPS
       DEBUG_PORT.printf("GPS Fix: %s (Sats: %d | Lat: %.5f, Lon: %.5f)\n", (gps.location.isValid() ? "YES" : "NO"), (int)gps.satellites.value(), gps.location.lat(), gps.location.lng());
+#else
+      DEBUG_PORT.println("GPS: ВИМКНЕНО (закоментовано в прошивці)");
+#endif
       DEBUG_PORT.printf("Telemetry Buffer: %d records\n", (int)telemetryBuffer.size());
       DEBUG_PORT.printf("Flash Log: %d / %d bytes\n", (int)currentFlashLogBytes, (int)MAX_LOG_FILE_BYTES);
       DEBUG_PORT.println("---------------------------------\n");
@@ -752,11 +767,19 @@ void loop() {
       }
 
       if (volt > 0 || rpm > 0 || speed > 0 || temp > 0 || myELM327.nb_rx_state == ELM_SUCCESS) {
+#ifdef ENABLE_GPS
         bool hasFix = gps.location.isValid() && (gps.location.age() < 5000);
         float curLat = hasFix ? (float)gps.location.lat() : 0.0f;
         float curLon = hasFix ? (float)gps.location.lng() : 0.0f;
         float curAlt = (hasFix && gps.altitude.isValid()) ? (float)gps.altitude.meters() : 0.0f;
         int curSat = gps.satellites.isValid() ? (int)gps.satellites.value() : 0;
+#else
+        bool hasFix = false;
+        float curLat = 0.0f;
+        float curLon = 0.0f;
+        float curAlt = 0.0f;
+        int curSat = 0;
+#endif
 
         DEBUG_PORT.printf("✅ DATA: RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | GPS: %s | Buffer: %d\n", 
                           rpm, speed, temp, volt, fuel_rate, (hasFix ? "FIX" : "NO_FIX"), (int)telemetryBuffer.size());

@@ -70,9 +70,15 @@ router.delete('/device/logs', (req, res) => {
 
 // 2. Single OBD Record Ingestion from ESP32
 router.post('/obd', async (req, res) => {
-  const { rpm = 0, speed = 0, temp = 0, voltage = 0, fuel_rate = 0 } = req.body;
+  const { rpm = 0, speed = 0, temp = 0, voltage = 0, fuel_rate = 0 } = req.body || {};
   const now = Date.now();
   
+  const cleanRpm = Math.max(0, Math.min(10000, Number(rpm) || 0));
+  const cleanSpeed = Math.max(0, Math.min(300, Number(speed) || 0));
+  const cleanTemp = Math.max(-50, Math.min(150, Number(temp) || 0));
+  const cleanVolt = Math.max(0, Math.min(30, Number(voltage) || 0));
+  const cleanFuel = Math.max(0, Math.min(100, Number(fuel_rate) || 0));
+
   try {
     const tripId = await tripService.ensureActiveTrip();
     const lastTime = tripService.getLastRecordTime();
@@ -81,10 +87,10 @@ router.post('/obd', async (req, res) => {
 
     await db.runAsync(
       `INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate) VALUES (?, ?, ?, ?, ?, ?)`,
-      [tripId, Number(rpm) || 0, Number(speed) || 0, Number(temp) || 0, Number(voltage) || 0, Number(fuel_rate) || 0]
+      [tripId, cleanRpm, cleanSpeed, cleanTemp, cleanVolt, cleanFuel]
     );
 
-    await tripService.updateTripStats(tripId, Number(speed) || 0, Number(fuel_rate) || 0, timeDiffSeconds);
+    await tripService.updateTripStats(tripId, cleanSpeed, cleanFuel, timeDiffSeconds);
     res.status(201).json({ success: true, tripId });
   } catch (err) {
     console.error('[API /obd] Error:', err.message);
@@ -94,7 +100,7 @@ router.post('/obd', async (req, res) => {
 
 // 3. Batch OBD Records Ingestion (Offline Buffering Sync)
 router.post('/obd/batch', async (req, res) => {
-  const { records } = req.body;
+  const { records } = req.body || {};
   if (!Array.isArray(records) || records.length === 0) {
     return res.status(400).json({ error: 'Records array is empty' });
   }
@@ -111,12 +117,12 @@ router.post('/obd/batch', async (req, res) => {
         const stmt = db.prepare(`INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate) VALUES (?, ?, ?, ?, ?, ?)`);
 
         for (const r of records) {
-          const rpm = Number(r.rpm) || 0;
-          const speed = Number(r.speed) || 0;
-          const temp = Number(r.temp) || 0;
-          const volt = Number(r.voltage || r.volt) || 0;
-          const fuel = Number(r.fuel_rate || r.fuel) || 0;
-          const dt = (r.dt && r.dt > 0 && r.dt <= 60) ? Number(r.dt) : 1.0;
+          const rpm = Math.max(0, Math.min(10000, Number(r.rpm) || 0));
+          const speed = Math.max(0, Math.min(300, Number(r.speed) || 0));
+          const temp = Math.max(-50, Math.min(150, Number(r.temp) || 0));
+          const volt = Math.max(0, Math.min(30, Number(r.voltage || r.volt) || 0));
+          const fuel = Math.max(0, Math.min(100, Number(r.fuel_rate || r.fuel) || 0));
+          const dt = (r.dt && Number(r.dt) > 0 && Number(r.dt) <= 60) ? Number(r.dt) : 1.0;
 
           if (speed > batchMaxSpeed) batchMaxSpeed = speed;
 
@@ -154,13 +160,21 @@ router.post('/obd/batch', async (req, res) => {
       });
     });
 
-    console.log(`[Batch Sync] Processed ${records.length} records for Trip #${tripId} (+${totalAddedDist.toFixed(2)} km)`);
     res.status(201).json({ success: true, count: records.length, tripId });
   } catch (err) {
     console.error('[API /obd/batch] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
+// Helper function to safely parse DB timestamps regardless of timezone format
+function parseTimestamp(ts) {
+  if (!ts) return 0;
+  const str = String(ts).trim();
+  const isoStr = str.includes('T') ? str : (str.replace(' ', 'T') + (str.endsWith('Z') ? '' : 'Z'));
+  const ms = new Date(isoStr).getTime();
+  return isNaN(ms) ? 0 : ms;
+}
 
 // 4. Latest Telemetry & Active Trip Stats (With Stale Offline Protection)
 router.get('/data', async (req, res) => {
@@ -175,10 +189,12 @@ router.get('/data', async (req, res) => {
     }
 
     // Check if device is actively online (heartbeat/log in the last 25 seconds)
-    const isOnline = latestDeviceStatus.last_seen && (Date.now() - new Date(latestDeviceStatus.last_seen).getTime() < 25000);
+    const lastSeenMs = latestDeviceStatus.last_seen ? parseTimestamp(latestDeviceStatus.last_seen) : 0;
+    const isOnline = lastSeenMs > 0 && (Date.now() - lastSeenMs < 25000);
     
-    // Check if latest record was generated in the last 25 seconds
-    const isFreshRecord = latestRecord && latestRecord.timestamp && (Date.now() - new Date(latestRecord.timestamp).getTime() < 25000);
+    // Check if latest record was generated in the last 25 seconds (safe UTC parse)
+    const recordTimeMs = latestRecord && latestRecord.timestamp ? parseTimestamp(latestRecord.timestamp) : 0;
+    const isFreshRecord = recordTimeMs > 0 && (Date.now() - recordTimeMs < 25000);
 
     // If offline or record is old/stale, zero out the live gauges so users don't see frozen old data
     const liveData = (isOnline || isFreshRecord) && latestRecord 
@@ -208,7 +224,7 @@ router.post('/reset-data', async (req, res) => {
     latestDeviceStatus.ip = '--';
     latestDeviceStatus.rssi = null;
     latestDeviceStatus.free_heap = '--';
-    tripService.finishCurrentTrip();
+    tripService.reset();
     res.json({ success: true, message: 'All telemetry records and test data purged' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -352,18 +368,19 @@ router.get('/settings', async (req, res) => {
 });
 
 router.post('/settings', async (req, res) => {
-  const { fuel_price } = req.body;
-  if (!fuel_price || isNaN(parseFloat(fuel_price))) {
-    return res.status(400).json({ error: 'Invalid fuel price' });
+  const { fuel_price } = req.body || {};
+  const price = parseFloat(fuel_price);
+  if (isNaN(price) || price <= 0 || price > 200) {
+    return res.status(400).json({ error: 'Invalid fuel price. Must be a number between 1 and 200 UAH.' });
   }
 
   try {
     await db.runAsync(
       `INSERT INTO settings (key, value, updated_at) VALUES ('fuel_price', ?, CURRENT_TIMESTAMP)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
-      [String(fuel_price)]
+      [price.toFixed(2)]
     );
-    res.json({ success: true, fuel_price });
+    res.json({ success: true, fuel_price: price.toFixed(2) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

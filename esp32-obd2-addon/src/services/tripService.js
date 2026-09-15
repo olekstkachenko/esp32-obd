@@ -48,12 +48,13 @@ async function ensureActiveTrip() {
 }
 
 async function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
-  if (timeDiffSeconds <= 0 || timeDiffSeconds > 60) return;
-  const distanceKm = (speedKmh > 0) ? (speedKmh * (timeDiffSeconds / 3600.0)) : 0;
+  const cleanSpeed = Math.max(0, Math.min(300, Number(speedKmh) || 0));
+  const validDt = (timeDiffSeconds > 0 && timeDiffSeconds <= 60) ? Number(timeDiffSeconds) : 0;
+  const distanceKm = (cleanSpeed > 0 && validDt > 0) ? (cleanSpeed * (validDt / 3600.0)) : 0;
   
   let addedFuel = 0;
-  if (fuelRateLh && fuelRateLh > 0) {
-    addedFuel = fuelRateLh * (timeDiffSeconds / 3600.0);
+  if (fuelRateLh && fuelRateLh > 0 && validDt > 0) {
+    addedFuel = Number(fuelRateLh) * (validDt / 3600.0);
   } else if (distanceKm > 0) {
     addedFuel = (distanceKm * 7.5) / 100.0;
   }
@@ -65,7 +66,7 @@ async function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
       avg_speed = (SELECT COALESCE(AVG(speed), 0) FROM obd_records WHERE trip_id = ? AND speed > 0),
       max_speed = MAX(COALESCE(max_speed, 0), ?)
     WHERE id = ?`, 
-    [distanceKm, addedFuel, tripId, speedKmh, tripId]
+    [distanceKm, addedFuel, tripId, cleanSpeed, tripId]
   );
 }
 
@@ -80,11 +81,17 @@ async function finishCurrentTrip() {
   return finishedId;
 }
 
+function reset() {
+  currentTripId = null;
+  lastRecordTime = null;
+}
+
 module.exports = {
   getCurrentTripId,
   getLastRecordTime,
   setLastRecordTime,
   ensureActiveTrip,
   updateTripStats,
-  finishCurrentTrip
+  finishCurrentTrip,
+  reset
 };

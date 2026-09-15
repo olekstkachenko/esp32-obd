@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "node --test tests/api.test.js tests/scenarios.test.js tests/flash-log.test.js",
+    "test": "node --test tests/api.test.js tests/scenarios.test.js tests/flash-log.test.js tests/edge-cases.test.js tests/timezone-freshness.test.js tests/chunked-buffer.test.js tests/trip-stats.test.js",
     "test:api": "node --test tests/api.test.js",
     "test:scenarios": "node --test tests/scenarios.test.js",
     "test:flash": "node --test tests/flash-log.test.js",
+    "test:edge": "node --test tests/edge-cases.test.js",
+    "test:timezone": "node --test tests/timezone-freshness.test.js",
+    "test:chunk": "node --test tests/chunked-buffer.test.js",
+    "test:stats": "node --test tests/trip-stats.test.js",
     "simulate": "node scripts/test-simulator.js"
   },
   "keywords": [],

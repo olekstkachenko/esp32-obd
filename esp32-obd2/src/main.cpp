@@ -267,15 +267,18 @@ void sendHeartbeat() {
   sendHttpPost(url, json, code);
 }
 
+const size_t MAX_BATCH_CHUNK = 40; // Safely fit in ESP32 RAM & TLS packet size (~3.5 KB)
+
 void flushBufferToServer() {
   if (telemetryBuffer.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
-  String url = String(serverUrlBase);
-  if (telemetryBuffer.size() > 1) url += "/batch";
+  String baseUrl = String(serverUrlBase);
+  bool isBatch = telemetryBuffer.size() > 1;
+  String url = isBatch ? (baseUrl + "/batch") : baseUrl;
 
-  String jsonPayload;
   if (telemetryBuffer.size() == 1) {
+    String jsonPayload;
     jsonPayload.reserve(128);
     const auto& r = telemetryBuffer[0];
     jsonPayload = "{";
@@ -285,10 +288,24 @@ void flushBufferToServer() {
     jsonPayload += "\"voltage\":" + String(r.volt, 1) + ",";
     jsonPayload += "\"fuel_rate\":" + String(r.fuel, 1);
     jsonPayload += "}";
-  } else {
-    jsonPayload.reserve(telemetryBuffer.size() * 85 + 32);
+
+    int httpCode = 0;
+    bool ok = sendHttpPost(url, jsonPayload, httpCode);
+    if (ok) {
+      telemetryBuffer.clear();
+      DEBUG_PORT.println("✅ [Buffer Sync] 1 запис успішно відправлено на сервер");
+    }
+    return;
+  }
+
+  // Safe chunked flushing to protect heap from large JSON allocations
+  while (!telemetryBuffer.empty() && WiFi.status() == WL_CONNECTED) {
+    size_t chunkSize = (telemetryBuffer.size() > MAX_BATCH_CHUNK) ? MAX_BATCH_CHUNK : telemetryBuffer.size();
+    
+    String jsonPayload;
+    jsonPayload.reserve(chunkSize * 85 + 32);
     jsonPayload = "{\"records\":[";
-    for (size_t i = 0; i < telemetryBuffer.size(); i++) {
+    for (size_t i = 0; i < chunkSize; i++) {
       const auto& r = telemetryBuffer[i];
       if (i > 0) jsonPayload += ",";
       jsonPayload += "{\"rpm\":" + String(r.rpm, 1) +
@@ -299,15 +316,16 @@ void flushBufferToServer() {
                      ",\"dt\":" + String(r.dt, 1) + "}";
     }
     jsonPayload += "]}";
-  }
 
-  int httpCode = 0;
-  bool ok = sendHttpPost(url, jsonPayload, httpCode);
-  if (ok) {
-    DEBUG_PORT.printf("✅ [Buffer Sync] Відправлено %d записів на сервер (HTTP %d)\n", (int)telemetryBuffer.size(), httpCode);
-    telemetryBuffer.clear();
-  } else {
-    DEBUG_PORT.printf("⚠️ [Buffer Sync] Збій синхронізації (HTTP %d). Буфер: %d записів\n", httpCode, (int)telemetryBuffer.size());
+    int httpCode = 0;
+    bool ok = sendHttpPost(url, jsonPayload, httpCode);
+    if (ok) {
+      telemetryBuffer.erase(telemetryBuffer.begin(), telemetryBuffer.begin() + chunkSize);
+      DEBUG_PORT.printf("✅ [Buffer Sync] Відправлено чанк %d записів (Залишок: %d)\n", (int)chunkSize, (int)telemetryBuffer.size());
+    } else {
+      DEBUG_PORT.printf("⚠️ [Buffer Sync] Збій синхронізації чанку (HTTP %d). Залишок: %d записів\n", httpCode, (int)telemetryBuffer.size());
+      break;
+    }
   }
 }
 
@@ -351,9 +369,9 @@ bool connectToELM327() {
     }
   }
 
-  // Крок 3: Періодичне сканування ефіру (раз на 25 секунд)
+  // Крок 3: Періодичне сканування ефіру (раз на 30 секунд)
   static unsigned long lastScanTime = 0;
-  if (millis() - lastScanTime > 25000) {
+  if (millis() - lastScanTime > 30000) {
     lastScanTime = millis();
     sendLog("🔎 [2/2] Автосканування Bluetooth-ефіру...", "info", "scanning");
 
@@ -416,13 +434,17 @@ void ensureELMConnected() {
     return;
   }
 
+  static unsigned long lastELMInitAttempt = 0;
   if (elmConnected && !elmInitialized) {
-    sendLog("⚙️ Bluetooth з'єднання є! Ініціалізуємо протокол Pajero 4 CAN...", "info", "connecting");
-    if (myELM327.begin(ELM_PORT, false, 2500)) {
-      sendLog("🚀 УСПІХ! Протокол ELM327 зв'язано з ЕБУ Pajero 4! Почався збір даних.", "success", "connected");
-      elmInitialized = true;
-    } else {
-      sendLog("⚠️ Bluetooth з'єднано, але ЕБУ ще не відповів (" + getELMStatusStr(myELM327.nb_rx_state) + ")", "warn", "connecting");
+    if (millis() - lastELMInitAttempt > 8000) {
+      lastELMInitAttempt = millis();
+      sendLog("⚙️ Bluetooth з'єднання є! Ініціалізуємо протокол Pajero 4 CAN...", "info", "connecting");
+      if (myELM327.begin(ELM_PORT, false, 2500)) {
+        sendLog("🚀 УСПІХ! Протокол ELM327 зв'язано з ЕБУ Pajero 4! Почався збір даних.", "success", "connected");
+        elmInitialized = true;
+      } else {
+        sendLog("⚠️ Bluetooth з'єднано, але ЕБУ ще не відповів (" + getELMStatusStr(myELM327.nb_rx_state) + ")", "warn", "connecting");
+      }
     }
   }
 }
@@ -514,7 +536,7 @@ void setup() {
 }
 
 void loop() {
-  // 0. Process USB Serial debug commands ('DUMP', 'CLEAR')
+  // 0. Process USB Serial debug commands ('DUMP', 'CLEAR', 'STATUS', 'REBOOT', 'HELP')
   if (DEBUG_PORT.available()) {
     String cmd = DEBUG_PORT.readStringUntil('\n');
     cmd.trim();
@@ -522,7 +544,27 @@ void loop() {
       dumpLogsToSerial();
     } else if (cmd.equalsIgnoreCase("CLEAR") || cmd.equalsIgnoreCase("CLEAR_LOGS")) {
       SPIFFS.remove(LOG_FILE_PATH);
+      currentFlashLogBytes = 0;
       DEBUG_PORT.println("✅ Flash-лог /obd_debug.log успішно очищено.");
+    } else if (cmd.equalsIgnoreCase("STATUS") || cmd.equalsIgnoreCase("INFO") || cmd.equalsIgnoreCase("STATE")) {
+      DEBUG_PORT.println("\n--- [ESP32 DIAGNOSTIC STATUS] ---");
+      DEBUG_PORT.printf("Free Heap: %d KB\n", (int)(ESP.getFreeHeap() / 1024));
+      DEBUG_PORT.printf("Wi-Fi: %s (IP: %s | RSSI: %d dBm)\n", (WiFi.status() == WL_CONNECTED ? "CONNECTED" : "OFFLINE"), WiFi.localIP().toString().c_str(), WiFi.RSSI());
+      DEBUG_PORT.printf("Bluetooth: %s | ELM Init: %s\n", (SerialBT.connected() ? "CONNECTED" : "DISCONNECTED"), (elmInitialized ? "YES" : "NO"));
+      DEBUG_PORT.printf("Telemetry Buffer: %d records\n", (int)telemetryBuffer.size());
+      DEBUG_PORT.printf("Flash Log: %d / %d bytes\n", (int)currentFlashLogBytes, (int)MAX_LOG_FILE_BYTES);
+      DEBUG_PORT.println("---------------------------------\n");
+    } else if (cmd.equalsIgnoreCase("REBOOT") || cmd.equalsIgnoreCase("RESTART")) {
+      DEBUG_PORT.println("🔄 Перезавантаження ESP32 за командою...");
+      delay(500);
+      ESP.restart();
+    } else if (cmd.equalsIgnoreCase("HELP") || cmd.equalsIgnoreCase("?")) {
+      DEBUG_PORT.println("\n--- [ДОСТУПНІ КОМАНДИ SERIAL] ---");
+      DEBUG_PORT.println("DUMP    - Вивантажити всі логи з Flash-пам'яті SPIFFS");
+      DEBUG_PORT.println("CLEAR   - Очистити файл логів у Flash-пам'яті");
+      DEBUG_PORT.println("STATUS  - Показати стан зв'язку, пам'ять RAM та буфер");
+      DEBUG_PORT.println("REBOOT  - Перезавантажити ESP32");
+      DEBUG_PORT.println("---------------------------------\n");
     }
   }
 

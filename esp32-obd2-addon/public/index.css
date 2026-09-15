@@ -201,30 +201,33 @@ h1 {
 
 /* Navigation Tabs */
 .nav-tabs {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
     background: rgba(15, 23, 42, 0.6);
-    padding: 6px;
-    border-radius: 100px;
+    padding: 5px;
+    border-radius: 14px;
     border: 1px solid var(--glass-border);
-    gap: 6px;
+    gap: 4px;
+    width: 100%;
 }
 
 .nav-tab {
-    flex: 1;
+    width: 100%;
     text-align: center;
-    padding: 10px 16px;
-    border-radius: 100px;
+    padding: 9px 4px;
+    border-radius: 10px;
     border: none;
     background: transparent;
     color: var(--text-secondary);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 5px;
+    white-space: nowrap;
 }
 
 .nav-tab.active {

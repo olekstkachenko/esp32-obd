@@ -87,7 +87,7 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
   }
 
   HTTPClient http;
-  http.setTimeout(7000); // 7s timeout allows stable cellular 4G TLS handshakes
+  http.setTimeout(8000); // 8000ms timeout allows stable cellular 4G TLS handshakes
   http.setReuse(false);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
@@ -96,7 +96,7 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
   if (isHttps) {
     WiFiClientSecure client;
     client.setInsecure(); // Accept Ngrok / Cloudflare SSL certificates
-    client.setTimeout(7);
+    client.setTimeout(8000); // 8000 milliseconds (8 seconds)
 
     if (!http.begin(client, url)) {
       DEBUG_PORT.printf("❌ [HTTP HTTPS] http.begin failed for: %s\n", url.c_str());
@@ -114,7 +114,7 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
     http.end();
   } else {
     WiFiClient client;
-    client.setTimeout(6);
+    client.setTimeout(8000); // 8000 milliseconds
 
     if (!http.begin(client, url)) {
       DEBUG_PORT.printf("❌ [HTTP Plain] http.begin failed for: %s\n", url.c_str());
@@ -411,17 +411,16 @@ void setup() {
   telemetryBuffer.reserve(MAX_BUFFER_SIZE);
   logQueue.reserve(64);
 
-  // 1. Google & Cloudflare DNS (Bypasses restricted mobile carrier DNS on Android hotspot)
-  IPAddress dns1(8, 8, 8, 8);
-  IPAddress dns2(1, 1, 1, 1);
-  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, dns1, dns2);
-
-  // 2. Non-blocking Wi-Fi initial start (Does not freeze boot while Android headunit loads)
+  // 1. Wi-Fi Station Mode with Power Save Disabled (Maximum 2.4 GHz stability on mobile hotspot)
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
+  
   DEBUG_PORT.printf("📡 Ініціалізація Wi-Fi клієнта ('%s')...\n", ssid);
+  WiFi.begin(ssid, password);
 
-  // 3. Start Bluetooth Master immediately
+  // 2. Start Bluetooth Master immediately
   SerialBT.setPin(elmPin);
   ELM_PORT.begin("ESP32-OBD2", true); // Master mode
   DEBUG_PORT.println("📡 Bluetooth Master готовий до з'єднання з 'OBDII'.");

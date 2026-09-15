@@ -1,6 +1,6 @@
 // =========================================================================
 // 🚗 ESP32 OBD2 Telemetry Logger for Mitsubishi Pajero Wagon 4
-// 📡 Bluetooth ELM327 ("OBDII") -> ESP32 -> 4G Wi-Fi -> Home Assistant
+// 📡 Dual-Core FreeRTOS Engine: Core 0 (Network/TLS) + Core 1 (OBD2/BT)
 // =========================================================================
 
 #include <Arduino.h>
@@ -14,6 +14,7 @@
 #include <FS.h>
 #include <SPIFFS.h>
 
+#include "esp_bt.h"
 #include "esp_bt_main.h"
 #include "esp_gap_bt_api.h"
 
@@ -42,7 +43,7 @@ static bool spiffsMounted = false;
 static size_t currentFlashLogBytes = 0;
 
 void initSpiffsLogging() {
-  spiffsMounted = SPIFFS.begin(true);
+  spiffsMounted = SPIFFS.begin(true, "/spiffs", 2); // Limit maxOpenFiles to 2 to save heap
   if (spiffsMounted && SPIFFS.exists(LOG_FILE_PATH)) {
     File f = SPIFFS.open(LOG_FILE_PATH, FILE_READ);
     if (f) {
@@ -55,7 +56,6 @@ void initSpiffsLogging() {
 void writeLogToFlash(const String& line) {
   if (!spiffsMounted) return;
   
-  // Fast RAM-cached size tracking (0 flash read overhead on every write)
   size_t lineBytes = line.length() + 2;
   if (currentFlashLogBytes + lineBytes > MAX_LOG_FILE_BYTES) {
     SPIFFS.remove(LOG_FILE_PATH);
@@ -92,30 +92,7 @@ void dumpLogsToSerial() {
   DEBUG_PORT.println("========================================================\n");
 }
 
-// --- Forward Declarations ---
-void sendLog(const String& message, const String& level = "info", const String& bt_status = "");
-void flushLogsToServer();
-void checkWiFi();
-
-void clearBluetoothBonds() {
-  int dev_num = esp_bt_gap_get_bond_device_num();
-  if (dev_num > 0) {
-    esp_bd_addr_t dev_list[dev_num];
-    esp_bt_gap_get_bond_device_list(&dev_num, dev_list);
-    for (int i = 0; i < dev_num; i++) {
-      esp_bt_gap_remove_bond_device(dev_list[i]);
-    }
-  }
-}
-
-ELM327 myELM327;
-
-unsigned long lastUpdate = 0;
-unsigned long updateInterval = 1000; // 1s active, 3s idle
-unsigned long lastWifiRetry = 0;
-unsigned long lastELMRetry = 0;
-unsigned long lastHeartbeat = 0;
-
+// --- Thread-Safe Shared Queues & Mutex ---
 struct OBDRecord {
   float rpm;
   float speed;
@@ -125,19 +102,51 @@ struct OBDRecord {
   float dt;
 };
 
-std::vector<OBDRecord> telemetryBuffer;
-const size_t MAX_BUFFER_SIZE = 1800; // Store up to ~30 minutes of offline telemetry (RAM safe)
-
 struct LogEntry {
   String message;
   String level;
   String bt_status;
 };
 
+static SemaphoreHandle_t dataMutex = NULL;
+std::vector<OBDRecord> telemetryBuffer;
+const size_t MAX_BUFFER_SIZE = 300; // Store up to ~5 minutes of offline telemetry (7.2 KB RAM)
 std::vector<LogEntry> logQueue;
 
+void sendLog(const String& message, const String& level = "info", const String& bt_status = "") {
+  String timestampStr = "[" + String(millis() / 1000) + "s] [" + level + "] " + message;
+  DEBUG_PORT.println(timestampStr);
+  writeLogToFlash(timestampStr);
+
+  LogEntry entry = {message, level, bt_status};
+  if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
+  logQueue.push_back(entry);
+  if (logQueue.size() > 20) logQueue.erase(logQueue.begin());
+  if (dataMutex) xSemaphoreGive(dataMutex);
+}
+
+void clearBluetoothBonds() {
+  if (!btStarted()) return;
+  int dev_num = esp_bt_gap_get_bond_device_num();
+  if (dev_num > 0 && dev_num < 20) {
+    esp_bd_addr_t dev_list[dev_num];
+    if (esp_bt_gap_get_bond_device_list(&dev_num, dev_list) == ESP_OK) {
+      for (int i = 0; i < dev_num; i++) {
+        esp_bt_gap_remove_bond_device(dev_list[i]);
+      }
+    }
+  }
+}
+
+ELM327 myELM327;
+bool elmConnected = false;
+bool elmInitialized = false;
+
+#include "esp_http_client.h"
+#include "roots.h"
+
 // =========================================================================
-// 🚀 Robust HTTP/HTTPS POST Handler (Optimized for 4G/Mobile Hotspots)
+// 🚀 Dual-Mode High-Speed HTTP/HTTPS POST Handler
 // =========================================================================
 bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
   if (WiFi.status() != WL_CONNECTED) {
@@ -145,49 +154,64 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
     return false;
   }
 
-  HTTPClient http;
-  http.setTimeout(8000); // 8000ms timeout allows stable cellular 4G TLS handshakes
-  http.setReuse(false);
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-
   bool isHttps = url.startsWith("https://");
 
   if (isHttps) {
-    WiFiClientSecure client;
-    client.setInsecure(); // Accept Ngrok / Cloudflare SSL certificates
-    client.setTimeout(8000); // 8000 milliseconds (8 seconds)
+    esp_http_client_config_t config = {};
+    config.url = url.c_str();
+    config.timeout_ms = 8000;
+    config.cert_pem = NGROK_ROOT_CA;
+    config.skip_cert_common_name_check = true;
+    config.buffer_size = 1024;
+    config.buffer_size_tx = 1024;
+    config.is_async = false;
 
-    if (!http.begin(client, url)) {
-      DEBUG_PORT.printf("❌ [HTTP HTTPS] http.begin failed for: %s\n", url.c_str());
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+      DEBUG_PORT.printf("❌ [HTTP HTTPS] Init failed for: %s | Free RAM: %d KB\n", url.c_str(), (int)(ESP.getFreeHeap() / 1024));
       outCode = -1;
       return false;
     }
 
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("User-Agent", "ESP32-OBD2-Pajero4");
-    http.addHeader("ngrok-skip-browser-warning", "true");
+    esp_http_client_set_method(client, HTTP_METHOD_POST);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "User-Agent", "ESP32-OBD2-Pajero4");
+    esp_http_client_set_header(client, "ngrok-skip-browser-warning", "true");
+    esp_http_client_set_post_field(client, jsonPayload.c_str(), jsonPayload.length());
 
-    outCode = http.POST(jsonPayload);
-    DEBUG_PORT.printf("📡 [HTTP HTTPS] Code: %d (%s) | Free RAM: %d KB\n", 
-                      outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024));
-    http.end();
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+      outCode = esp_http_client_get_status_code(client);
+      DEBUG_PORT.printf("📡 [HTTP HTTPS] Code: %d | Free RAM: %d KB (MaxBlock: %d KB)\n", 
+                        outCode, (int)(ESP.getFreeHeap() / 1024), (int)(ESP.getMaxAllocHeap() / 1024));
+    } else {
+      outCode = -1;
+      DEBUG_PORT.printf("❌ [HTTP HTTPS] Error: %s (%d) | Free RAM: %d KB (MaxBlock: %d KB)\n", 
+                        esp_err_to_name(err), err, (int)(ESP.getFreeHeap() / 1024), (int)(ESP.getMaxAllocHeap() / 1024));
+    }
+
+    esp_http_client_cleanup(client);
   } else {
+    // Ultra-Fast Plain HTTP for In-Car Hotspot Local Connection (0 KB Crypto Overhead!)
+    HTTPClient http;
+    http.setTimeout(5000);
+    http.setReuse(false);
+
     WiFiClient client;
-    client.setTimeout(8000); // 8000 milliseconds
+    client.setTimeout(5000);
 
     if (!http.begin(client, url)) {
-      DEBUG_PORT.printf("❌ [HTTP Plain] http.begin failed for: %s\n", url.c_str());
+      DEBUG_PORT.printf("❌ [HTTP Plain] begin failed for: %s | Free RAM: %d KB\n", url.c_str(), (int)(ESP.getFreeHeap() / 1024));
       outCode = -1;
       return false;
     }
 
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", "ESP32-OBD2-Pajero4");
-    http.addHeader("ngrok-skip-browser-warning", "true");
 
     outCode = http.POST(jsonPayload);
-    DEBUG_PORT.printf("📡 [HTTP Plain] Code: %d (%s) | Free RAM: %d KB\n", 
-                      outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024));
+    DEBUG_PORT.printf("📡 [HTTP Plain] Code: %d (%s) | Free RAM: %d KB (MaxBlock: %d KB)\n", 
+                      outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024), (int)(ESP.getMaxAllocHeap() / 1024));
     http.end();
   }
 
@@ -195,7 +219,6 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
 }
 
 void flushLogsToServer() {
-  if (logQueue.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
   String baseUrl = String(serverUrlBase);
@@ -203,8 +226,18 @@ void flushLogsToServer() {
   String url = (idx >= 0 ? baseUrl.substring(0, idx) : baseUrl) + "/api/device/log";
 
   int count = 0;
-  while (!logQueue.empty() && WiFi.status() == WL_CONNECTED && count < 5) {
-    LogEntry entry = logQueue.front();
+  while (WiFi.status() == WL_CONNECTED && count < 5) {
+    LogEntry entry;
+    bool hasEntry = false;
+
+    if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
+    if (!logQueue.empty()) {
+      entry = logQueue.front();
+      hasEntry = true;
+    }
+    if (dataMutex) xSemaphoreGive(dataMutex);
+
+    if (!hasEntry) break;
 
     String cleanMsg = entry.message;
     cleanMsg.replace("\"", "'");
@@ -226,25 +259,13 @@ void flushLogsToServer() {
     bool ok = sendHttpPost(url, json, code);
 
     if (ok) {
-      logQueue.erase(logQueue.begin());
+      if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
+      if (!logQueue.empty()) logQueue.erase(logQueue.begin());
+      if (dataMutex) xSemaphoreGive(dataMutex);
       count++;
     } else {
-      break; // Pause until next flush cycle
+      break;
     }
-  }
-}
-
-void sendLog(const String& message, const String& level, const String& bt_status) {
-  String timestampStr = "[" + String(millis() / 1000) + "s] [" + level + "] " + message;
-  DEBUG_PORT.println(timestampStr);
-  writeLogToFlash(timestampStr);
-
-  LogEntry entry = {message, level, bt_status};
-  logQueue.push_back(entry);
-  if (logQueue.size() > 60) logQueue.erase(logQueue.begin());
-
-  if (WiFi.status() == WL_CONNECTED) {
-    flushLogsToServer();
   }
 }
 
@@ -255,9 +276,11 @@ void sendHeartbeat() {
   int idx = baseUrl.indexOf("/api/obd");
   String url = (idx >= 0 ? baseUrl.substring(0, idx) : baseUrl) + "/api/device/log";
 
+  String btState = elmInitialized ? "connected" : (SerialBT.connected() ? "connecting" : "disconnected");
+
   String json = "{";
   json += "\"wifi_status\":\"connected\",";
-  json += "\"bt_status\":\"" + String(SerialBT.connected() ? "connected" : "disconnected") + "\",";
+  json += "\"bt_status\":\"" + btState + "\",";
   json += "\"free_heap\":" + String(ESP.getFreeHeap() / 1024) + ",";
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
   json += "\"ip\":\"" + WiFi.localIP().toString() + "\"";
@@ -270,17 +293,28 @@ void sendHeartbeat() {
 const size_t MAX_BATCH_CHUNK = 40; // Safely fit in ESP32 RAM & TLS packet size (~3.5 KB)
 
 void flushBufferToServer() {
-  if (telemetryBuffer.empty()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
   String baseUrl = String(serverUrlBase);
-  bool isBatch = telemetryBuffer.size() > 1;
+  bool isBatch = false;
+  
+  if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
+  size_t bufSize = telemetryBuffer.size();
+  isBatch = (bufSize > 1);
+  if (dataMutex) xSemaphoreGive(dataMutex);
+
+  if (bufSize == 0) return;
+
   String url = isBatch ? (baseUrl + "/batch") : baseUrl;
 
-  if (telemetryBuffer.size() == 1) {
+  if (bufSize == 1) {
+    OBDRecord r;
+    if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
+    if (!telemetryBuffer.empty()) r = telemetryBuffer[0];
+    if (dataMutex) xSemaphoreGive(dataMutex);
+
     String jsonPayload;
     jsonPayload.reserve(128);
-    const auto& r = telemetryBuffer[0];
     jsonPayload = "{";
     jsonPayload += "\"rpm\":" + String(r.rpm, 1) + ",";
     jsonPayload += "\"speed\":" + String(r.speed, 1) + ",";
@@ -292,21 +326,34 @@ void flushBufferToServer() {
     int httpCode = 0;
     bool ok = sendHttpPost(url, jsonPayload, httpCode);
     if (ok) {
+      if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
       telemetryBuffer.clear();
+      if (dataMutex) xSemaphoreGive(dataMutex);
       DEBUG_PORT.println("✅ [Buffer Sync] 1 запис успішно відправлено на сервер");
     }
     return;
   }
 
   // Safe chunked flushing to protect heap from large JSON allocations
-  while (!telemetryBuffer.empty() && WiFi.status() == WL_CONNECTED) {
-    size_t chunkSize = (telemetryBuffer.size() > MAX_BATCH_CHUNK) ? MAX_BATCH_CHUNK : telemetryBuffer.size();
-    
+  while (WiFi.status() == WL_CONNECTED) {
+    size_t currentSize = 0;
+    std::vector<OBDRecord> chunk;
+
+    if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
+    currentSize = telemetryBuffer.size();
+    if (currentSize > 0) {
+      size_t chunkSize = (currentSize > MAX_BATCH_CHUNK) ? MAX_BATCH_CHUNK : currentSize;
+      chunk.assign(telemetryBuffer.begin(), telemetryBuffer.begin() + chunkSize);
+    }
+    if (dataMutex) xSemaphoreGive(dataMutex);
+
+    if (chunk.empty()) break;
+
     String jsonPayload;
-    jsonPayload.reserve(chunkSize * 85 + 32);
+    jsonPayload.reserve(chunk.size() * 85 + 32);
     jsonPayload = "{\"records\":[";
-    for (size_t i = 0; i < chunkSize; i++) {
-      const auto& r = telemetryBuffer[i];
+    for (size_t i = 0; i < chunk.size(); i++) {
+      const auto& r = chunk[i];
       if (i > 0) jsonPayload += ",";
       jsonPayload += "{\"rpm\":" + String(r.rpm, 1) +
                      ",\"speed\":" + String(r.speed, 1) +
@@ -320,18 +367,82 @@ void flushBufferToServer() {
     int httpCode = 0;
     bool ok = sendHttpPost(url, jsonPayload, httpCode);
     if (ok) {
-      telemetryBuffer.erase(telemetryBuffer.begin(), telemetryBuffer.begin() + chunkSize);
-      DEBUG_PORT.printf("✅ [Buffer Sync] Відправлено чанк %d записів (Залишок: %d)\n", (int)chunkSize, (int)telemetryBuffer.size());
+      if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
+      size_t toErase = (telemetryBuffer.size() >= chunk.size()) ? chunk.size() : telemetryBuffer.size();
+      telemetryBuffer.erase(telemetryBuffer.begin(), telemetryBuffer.begin() + toErase);
+      size_t remaining = telemetryBuffer.size();
+      if (dataMutex) xSemaphoreGive(dataMutex);
+
+      DEBUG_PORT.printf("✅ [Buffer Sync] Відправлено чанк %d записів (Залишок: %d)\n", (int)chunk.size(), (int)remaining);
     } else {
-      DEBUG_PORT.printf("⚠️ [Buffer Sync] Збій синхронізації чанку (HTTP %d). Залишок: %d записів\n", httpCode, (int)telemetryBuffer.size());
+      DEBUG_PORT.printf("⚠️ [Buffer Sync] Збій синхронізації чанку (HTTP %d). Буфер: %d записів\n", httpCode, (int)currentSize);
       break;
     }
   }
 }
 
-bool elmConnected = false;
-bool elmInitialized = false;
+// =========================================================================
+// 🌐 CORE 0 BACKGROUND TASK: Dedicated Wi-Fi, TLS & Telemetry Ingestion
+// =========================================================================
+static bool wasWifiConnected = false;
+static unsigned long lastWifiRetry = 0;
+static unsigned long lastLogFlush = 0;
+static unsigned long lastHeartbeat = 0;
 
+void networkTask(void *pvParameters) {
+  DEBUG_PORT.printf("🌐 [Core 0] Network Task запущено на ядрі %d\n", xPortGetCoreID());
+
+  for (;;) {
+    // 1. Wi-Fi Connection Management
+    if (WiFi.status() == WL_CONNECTED) {
+      if (!wasWifiConnected) {
+        wasWifiConnected = true;
+        String ip = WiFi.localIP().toString();
+        int rssi = WiFi.RSSI();
+        DEBUG_PORT.printf("\n========================================\n");
+        DEBUG_PORT.printf("🌐 Wi-Fi ПІДКЛЮЧЕНО (Магнітола Pajero)!\n");
+        DEBUG_PORT.printf("IP: %s | RSSI: %d dBm | Free Heap: %d KB\n", ip.c_str(), rssi, (int)(ESP.getFreeHeap() / 1024));
+        DEBUG_PORT.printf("========================================\n");
+
+        configTime(0, 0, "pool.ntp.org", "time.google.com");
+        sendLog("🌐 Wi-Fi підключено до '" + String(ssid) + "'! IP: " + ip + " (RSSI: " + String(rssi) + " dBm)", "success", "wifi_connected");
+        flushLogsToServer();
+        flushBufferToServer();
+      }
+    } else {
+      if (wasWifiConnected) {
+        wasWifiConnected = false;
+        DEBUG_PORT.println("⚠️ Wi-Fi з'єднання втрачено (перехід в офлайн-буфер)!");
+      }
+      if (millis() - lastWifiRetry > 30000) {
+        lastWifiRetry = millis();
+        DEBUG_PORT.println("🔄 Перевірка Wi-Fi з'єднання (WiFi.reconnect)...");
+        if (WiFi.status() != WL_CONNECTED) {
+          WiFi.reconnect();
+        }
+      }
+    }
+
+    // 2. Periodic Log Flushing (every 2.5s)
+    if (WiFi.status() == WL_CONNECTED && (millis() - lastLogFlush > 2500)) {
+      lastLogFlush = millis();
+      flushLogsToServer();
+      flushBufferToServer();
+    }
+
+    // 3. Heartbeat (every 8s)
+    if (WiFi.status() == WL_CONNECTED && (millis() - lastHeartbeat > 8000)) {
+      lastHeartbeat = millis();
+      sendHeartbeat();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+}
+
+// =========================================================================
+// 📡 BLUETOOTH ELM327 LOGIC (Runs on Core 1)
+// =========================================================================
 bool isDummyMac(uint8_t mac[6]) {
   if (mac[0] == 0x00 && mac[1] == 0x00 && mac[2] == 0x00 && mac[3] == 0x00 && mac[4] == 0x00 && mac[5] == 0x00) return true;
   if (mac[0] == 0x00 && mac[1] == 0x00 && mac[2] == 0x00 && mac[3] == 0x33 && mac[4] == 0x33 && mac[5] == 0x33) return true;
@@ -420,6 +531,8 @@ String getELMStatusStr(int8_t status) {
   }
 }
 
+static unsigned long lastELMRetry = 0;
+
 void ensureELMConnected() {
   if (!SerialBT.connected()) {
     elmConnected = false;
@@ -449,45 +562,21 @@ void ensureELMConnected() {
   }
 }
 
-static bool wasWifiConnected = false;
-
-void checkWiFi() {
-  if (WiFi.status() == WL_CONNECTED) {
-    if (!wasWifiConnected) {
-      wasWifiConnected = true;
-      String ip = WiFi.localIP().toString();
-      int rssi = WiFi.RSSI();
-      DEBUG_PORT.printf("\n========================================\n");
-      DEBUG_PORT.printf("🌐 Wi-Fi ПІДКЛЮЧЕНО (Магнітола Pajero)!\n");
-      DEBUG_PORT.printf("IP: %s | RSSI: %d dBm | Free Heap: %d KB\n", ip.c_str(), rssi, (int)(ESP.getFreeHeap() / 1024));
-      DEBUG_PORT.printf("========================================\n");
-      
-      // Sync NTP time for TLS
-      configTime(0, 0, "pool.ntp.org", "time.google.com");
-
-      sendLog("🌐 Wi-Fi підключено до '" + String(ssid) + "'! IP: " + ip + " (RSSI: " + String(rssi) + " dBm)", "success", "wifi_connected");
-      flushLogsToServer();
-      flushBufferToServer(); // Immediately flush any records saved during Android 15s boot
-    }
-  } else {
-    if (wasWifiConnected) {
-      wasWifiConnected = false;
-      DEBUG_PORT.println("⚠️ Wi-Fi з'єднання втрачено (перехід в офлайн-буфер)!");
-    }
-    // Only attempt manual reconnect every 20 seconds (never interrupt active 4-way WPA2 handshakes)
-    if (millis() - lastWifiRetry > 20000) {
-      lastWifiRetry = millis();
-      DEBUG_PORT.println("🔄 Спроба перепідключення до Wi-Fi точки Pajero...");
-      WiFi.disconnect();
-      delay(100);
-      WiFi.begin(ssid, password);
-    }
-  }
-}
+// =========================================================================
+// 🚀 ARDUINO SETUP & LOOP (Runs on Core 1)
+// =========================================================================
+unsigned long lastUpdate = 0;
+unsigned long updateInterval = 1000;
 
 void setup() {
   DEBUG_PORT.begin(115200);
   delay(300);
+
+  // CRITICAL: Release BLE controller RAM before starting Bluetooth Classic!
+  // This frees ~30 KB of contiguous internal SRAM for MbedTLS TLS SSL handshakes.
+  esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+
+  dataMutex = xSemaphoreCreateMutex();
 
   initSpiffsLogging();
   if (spiffsMounted) {
@@ -499,38 +588,40 @@ void setup() {
 
   DEBUG_PORT.println("\n\n========================================");
   DEBUG_PORT.println("🚗 ESP32 Pajero 4 OBD2 Telemetry Logger");
-  DEBUG_PORT.printf("Free Heap: %d KB\n", (int)(ESP.getFreeHeap() / 1024));
+  DEBUG_PORT.printf("Free Heap: %d KB | Max Contiguous Block: %d KB\n", (int)(ESP.getFreeHeap() / 1024), (int)(ESP.getMaxAllocHeap() / 1024));
   DEBUG_PORT.println("💡 Введіть 'DUMP' у Serial для вивантаження логу з Flash-пам'яті");
   DEBUG_PORT.println("========================================");
 
-  telemetryBuffer.reserve(MAX_BUFFER_SIZE);
-  logQueue.reserve(64);
+  telemetryBuffer.reserve(50);
+  logQueue.reserve(15);
 
-  // 1. Wi-Fi Station Mode with Power Save Disabled (Maximum 2.4 GHz stability on mobile hotspot)
+  // 1. Start Bluetooth Master (Must be started before Wi-Fi for RF coexistence coex_enable)
+  if (ELM_PORT.begin("ESP32-OBD2", true)) {
+    SerialBT.setPin(elmPin);
+    DEBUG_PORT.println("📡 Bluetooth Master готовий до з'єднання з 'OBDII'.");
+  } else {
+    DEBUG_PORT.println("⚠️ Помилка ініціалізації Bluetooth Master!");
+  }
+
+  // 2. Wi-Fi Station Mode Configuration (Modem Sleep MUST be true for WiFi/BT coexistence)
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
+  WiFi.setSleep(true);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
   
   DEBUG_PORT.printf("📡 Підключення до Wi-Fi точки '%s'...\n", ssid);
   WiFi.begin(ssid, password);
 
-  // Give Wi-Fi a clean 4-second initial window to connect before Bluetooth activates
-  unsigned long startWifi = millis();
-  while (WiFi.status() != WL_CONNECTED && (millis() - startWifi < 4000)) {
-    delay(200);
-    DEBUG_PORT.print(".");
-  }
-  DEBUG_PORT.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    checkWiFi();
-  }
-
-  // 2. Start Bluetooth Master after Wi-Fi window
-  SerialBT.setPin(elmPin);
-  ELM_PORT.begin("ESP32-OBD2", true); // Master mode
-  DEBUG_PORT.println("📡 Bluetooth Master готовий до з'єднання з 'OBDII'.");
+  // 3. Launch Dedicated Network Task on Core 0 (Completely non-blocking!)
+  xTaskCreatePinnedToCore(
+    networkTask,
+    "NetworkTask",
+    6144,
+    NULL,
+    1,
+    NULL,
+    0 // Core 0
+  );
   
   sendLog("🚀 ESP32 успішно завантажено! Очікування старту точки доступу та сканера...", "info");
 }
@@ -568,26 +659,10 @@ void loop() {
     }
   }
 
-  // 1. Monitor Wi-Fi state & handle non-blocking auto-reconnects
-  checkWiFi();
-
-  // 2. Periodic log flushing (every 2.5 seconds)
-  static unsigned long lastLogFlush = 0;
-  if (WiFi.status() == WL_CONNECTED && (millis() - lastLogFlush > 2500)) {
-    lastLogFlush = millis();
-    flushLogsToServer();
-  }
-
-  // 3. Heartbeat ping (every 10 seconds)
-  if (millis() - lastHeartbeat > 10000) {
-    lastHeartbeat = millis();
-    sendHeartbeat();
-  }
-
-  // 4. Maintain Bluetooth OBD2 connection
+  // 1. Maintain Bluetooth OBD2 connection
   ensureELMConnected();
 
-  // 5. Query OBD2 telemetry if connected
+  // 2. Query OBD2 telemetry if connected
   if (elmInitialized && SerialBT.connected()) {
     if (millis() - lastUpdate > updateInterval) {
       float dt = (lastUpdate > 0) ? ((millis() - lastUpdate) / 1000.0) : 1.0;
@@ -639,16 +714,15 @@ void loop() {
         DEBUG_PORT.printf("✅ DATA: RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
                           rpm, speed, temp, volt, fuel_rate, (int)telemetryBuffer.size());
         
-        // Save to offline buffer (will be flushed when Android Wi-Fi connects)
+        if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
         if (telemetryBuffer.size() >= MAX_BUFFER_SIZE) {
           telemetryBuffer.erase(telemetryBuffer.begin());
         }
         telemetryBuffer.push_back({rpm, speed, temp, volt, fuel_rate, dt});
-
-        if (WiFi.status() == WL_CONNECTED) {
-          flushBufferToServer();
-        }
+        if (dataMutex) xSemaphoreGive(dataMutex);
       }
     }
   }
+
+  delay(50);
 }

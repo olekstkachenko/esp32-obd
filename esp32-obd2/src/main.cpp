@@ -88,7 +88,6 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
   if (isHttps) {
     WiFiClientSecure client;
     client.setInsecure(); // Accept self-signed / Ngrok / Cloudflare SSL
-    client.setBufferSizes(2048, 1024); // CRITICAL: Reduces mbedTLS RAM from 45KB to 3KB (Avoids OOM with Bluetooth!)
     client.setTimeout(4);
 
     if (!http.begin(client, url)) {

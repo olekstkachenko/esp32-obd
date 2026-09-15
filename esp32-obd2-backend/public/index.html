@@ -155,7 +155,8 @@
                     <div id="diagLastUpdated" style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">Оновлення в реальному часі</div>
                 </div>
                 <div style="display: flex; gap: 8px;">
-                    <button class="btn-sm" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" onclick="clearDeviceLogs()">🗑️ Очистити</button>
+                    <button class="btn-sm" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" onclick="resetAllData()">🗑️ Скинути базу</button>
+                    <button class="btn-sm" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" onclick="clearDeviceLogs()">Очистити логи</button>
                     <button class="btn-sm btn-primary" onclick="fetchDeviceStatus()">🔄 Оновити</button>
                 </div>
             </div>
@@ -362,7 +363,18 @@
                     body: JSON.stringify({ fuel_price: inputVal })
                 });
                 if (currentTab === 'trips') loadTrips();
-            } catch (err) {}
+        async function resetAllData() {
+            if (!confirm('Очистити всі тестові записи, історію поїздок та логи з бази?')) return;
+            try {
+                await fetch(apiUrl('api/reset-data'), { method: 'POST' });
+                fetchLatest();
+                fetchHistory();
+                fetchDeviceStatus();
+                if (currentTab === 'trips') loadTrips();
+                alert('Всі тестові дані успішно очищено!');
+            } catch (err) {
+                alert('Помилка очищення');
+            }
         }
 
         async function fetchLatest() {
@@ -371,15 +383,25 @@
                 const res = await fetch(apiUrl('api/data'));
                 const data = await res.json();
                 
+                const isStale = Boolean(data.is_stale);
+
                 document.getElementById('tripDist').innerText = Number(data.trip.distance_km || 0).toFixed(1);
                 document.getElementById('tripAvgSpeed').innerText = Math.round(data.trip.avg_speed || 0);
                 document.getElementById('tripMaxSpeed').innerText = Math.round(data.trip.max_speed || 0);
                 
-                document.getElementById('currentSpeed').innerText = Math.round(data.latest.speed || 0);
-                document.getElementById('currentRpm').innerText = Math.round(data.latest.rpm || 0);
-                document.getElementById('currentTemp').innerText = Math.round(data.latest.temp || 0);
-                document.getElementById('currentVolt').innerText = Number(data.latest.voltage || 0).toFixed(1);
-                document.getElementById('currentFuel').innerText = Number(data.latest.fuel_rate || 0).toFixed(1);
+                if (isStale) {
+                    document.getElementById('currentSpeed').innerText = '0';
+                    document.getElementById('currentRpm').innerText = '0';
+                    document.getElementById('currentTemp').innerText = '--';
+                    document.getElementById('currentVolt').innerText = '--';
+                    document.getElementById('currentFuel').innerText = '0.0';
+                } else {
+                    document.getElementById('currentSpeed').innerText = Math.round(data.latest.speed || 0);
+                    document.getElementById('currentRpm').innerText = Math.round(data.latest.rpm || 0);
+                    document.getElementById('currentTemp').innerText = Math.round(data.latest.temp || 0);
+                    document.getElementById('currentVolt').innerText = Number(data.latest.voltage || 0).toFixed(1);
+                    document.getElementById('currentFuel').innerText = Number(data.latest.fuel_rate || 0).toFixed(1);
+                }
             } catch (err) {}
         }
 

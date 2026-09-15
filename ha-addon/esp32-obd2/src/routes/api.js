@@ -142,7 +142,7 @@ router.post('/obd/batch', async (req, res) => {
   }
 });
 
-// 4. Latest Telemetry & Active Trip Stats
+// 4. Latest Telemetry & Active Trip Stats (With Stale Offline Protection)
 router.get('/data', async (req, res) => {
   try {
     const activeId = tripService.getCurrentTripId();
@@ -154,10 +154,42 @@ router.get('/data', async (req, res) => {
       if (row) tripStats = row;
     }
 
+    // Check if device is actively online (heartbeat/log in the last 25 seconds)
+    const isOnline = latestDeviceStatus.last_seen && (Date.now() - new Date(latestDeviceStatus.last_seen).getTime() < 25000);
+    
+    // Check if latest record was generated in the last 25 seconds
+    const isFreshRecord = latestRecord && latestRecord.timestamp && (Date.now() - new Date(latestRecord.timestamp).getTime() < 25000);
+
+    // If offline or record is old/stale, zero out the live gauges so users don't see frozen old data
+    const liveData = (isOnline || isFreshRecord) && latestRecord 
+      ? latestRecord 
+      : { rpm: 0, speed: 0, temp: 0, voltage: 0, fuel_rate: 0 };
+
     res.json({
-      latest: latestRecord || { rpm: 0, speed: 0, temp: 0, voltage: 0, fuel_rate: 0 },
-      trip: tripStats
+      latest: liveData,
+      trip: tripStats,
+      is_online: Boolean(isOnline),
+      is_stale: !isOnline && !isFreshRecord
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4.1 Reset / Clear All Database Telemetry & Test Logs
+router.post('/reset-data', async (req, res) => {
+  try {
+    await db.runAsync(`DELETE FROM obd_records`);
+    await db.runAsync(`DELETE FROM trips`);
+    deviceLogs.length = 0;
+    latestDeviceStatus.last_seen = null;
+    latestDeviceStatus.wifi = 'unknown';
+    latestDeviceStatus.bt = 'disconnected';
+    latestDeviceStatus.ip = '--';
+    latestDeviceStatus.rssi = null;
+    latestDeviceStatus.free_heap = '--';
+    tripService.finishCurrentTrip();
+    res.json({ success: true, message: 'All telemetry records and test data purged' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

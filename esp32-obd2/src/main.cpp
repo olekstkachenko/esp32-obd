@@ -5,6 +5,7 @@
 #include <ELMduino.h>
 #include <WiFiClientSecure.h>
 #include <vector>
+#include <time.h>
 
 #include "esp_bt_main.h"
 #include "esp_gap_bt_api.h"
@@ -81,18 +82,19 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
   }
 
   HTTPClient http;
-  http.setTimeout(6000); // 6s timeout allows stable cellular 4G TLS handshakes
+  http.setTimeout(7000); // 7s timeout allows stable cellular 4G TLS handshakes
   http.setReuse(false);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
   bool isHttps = url.startsWith("https://");
 
   if (isHttps) {
     WiFiClientSecure client;
     client.setInsecure(); // Accept Ngrok / Cloudflare SSL certificates
-    client.setTimeout(6);
+    client.setTimeout(7);
 
     if (!http.begin(client, url)) {
-      DEBUG_PORT.printf("❌ [HTTP HTTPS] http.begin failed: %s\n", url.c_str());
+      DEBUG_PORT.printf("❌ [HTTP HTTPS] http.begin failed for: %s\n", url.c_str());
       outCode = -1;
       return false;
     }
@@ -102,13 +104,15 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
     http.addHeader("ngrok-skip-browser-warning", "true");
 
     outCode = http.POST(jsonPayload);
+    DEBUG_PORT.printf("📡 [HTTP POST HTTPS] Code: %d (%s) | Free RAM: %d KB | URL: %s\n", 
+                      outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024), url.c_str());
     http.end();
   } else {
     WiFiClient client;
     client.setTimeout(6);
 
     if (!http.begin(client, url)) {
-      DEBUG_PORT.printf("❌ [HTTP Plain] http.begin failed: %s\n", url.c_str());
+      DEBUG_PORT.printf("❌ [HTTP Plain] http.begin failed for: %s\n", url.c_str());
       outCode = -1;
       return false;
     }
@@ -118,6 +122,8 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
     http.addHeader("ngrok-skip-browser-warning", "true");
 
     outCode = http.POST(jsonPayload);
+    DEBUG_PORT.printf("📡 [HTTP POST Plain] Code: %d (%s) | Free RAM: %d KB\n", 
+                      outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024));
     http.end();
   }
 
@@ -154,8 +160,6 @@ void flushLogsToServer() {
 
     int code = 0;
     bool ok = sendHttpPost(url, json, code);
-    DEBUG_PORT.printf("📡 [HTTP Log] %d (%s) | RAM: %d KB | Log: %s\n", 
-                      code, ok ? "OK" : "ERR", (int)(ESP.getFreeHeap() / 1024), cleanMsg.c_str());
 
     if (ok) {
       logQueue.erase(logQueue.begin());
@@ -371,6 +375,9 @@ void checkWiFi() {
       DEBUG_PORT.printf("IP: %s | RSSI: %d dBm | Free Heap: %d KB\n", ip.c_str(), rssi, (int)(ESP.getFreeHeap() / 1024));
       DEBUG_PORT.printf("========================================\n");
       
+      // Sync NTP time for TLS
+      configTime(0, 0, "pool.ntp.org", "time.google.com");
+
       sendLog("🌐 Wi-Fi підключено до '" + String(ssid) + "'! IP: " + ip + " (RSSI: " + String(rssi) + " dBm)", "success", "wifi_connected");
       flushLogsToServer();
     }
@@ -399,7 +406,12 @@ void setup() {
   telemetryBuffer.reserve(MAX_BUFFER_SIZE);
   logQueue.reserve(64);
 
-  // 1. Prioritize Wi-Fi connection to mobile hotspot
+  // 1. Configure reliable Google & Cloudflare DNS (Bypasses restricted mobile carrier DNS)
+  IPAddress dns1(8, 8, 8, 8);
+  IPAddress dns2(1, 1, 1, 1);
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, dns1, dns2);
+
+  // 2. Prioritize Wi-Fi connection to mobile hotspot
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   DEBUG_PORT.printf("Connecting to Mobile Hotspot '%s'...\n", ssid);
@@ -415,7 +427,7 @@ void setup() {
     checkWiFi();
   }
 
-  // 2. Start Bluetooth Master
+  // 3. Start Bluetooth Master
   sendLog("🚀 ESP32 завантажено! Запуск Bluetooth Master...", "info");
   SerialBT.setPin(elmPin);
   ELM_PORT.begin("ESP32-OBD2", true); // Master mode

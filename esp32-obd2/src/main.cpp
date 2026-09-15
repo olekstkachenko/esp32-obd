@@ -31,55 +31,65 @@ const char* elmName = SECRET_ELM_NAME;
 const char* elmPin = SECRET_ELM_PIN;
 uint8_t elmMac[6] = SECRET_ELM_MAC;
 
-// --- Persistent Flash Logging (Survives Power Loss / Reboots) ---
+// --- Persistent Flash Logging (Optimized with Zero Redundant I/O) ---
 const char* LOG_FILE_PATH = "/obd_debug.log";
 const size_t MAX_LOG_FILE_BYTES = 65536; // 64 KB maximum log file size in Flash
+static bool spiffsMounted = false;
+static size_t currentFlashLogBytes = 0;
+
+void initSpiffsLogging() {
+  spiffsMounted = SPIFFS.begin(true);
+  if (spiffsMounted && SPIFFS.exists(LOG_FILE_PATH)) {
+    File f = SPIFFS.open(LOG_FILE_PATH, FILE_READ);
+    if (f) {
+      currentFlashLogBytes = f.size();
+      f.close();
+    }
+  }
+}
 
 void writeLogToFlash(const String& line) {
-  if (!SPIFFS.begin(true)) return;
+  if (!spiffsMounted) return;
   
-  // Rotate if log exceeds max size
-  if (SPIFFS.exists(LOG_FILE_PATH)) {
-    File check = SPIFFS.open(LOG_FILE_PATH, FILE_READ);
-    if (check) {
-      if (check.size() > MAX_LOG_FILE_BYTES) {
-        check.close();
-        SPIFFS.remove(LOG_FILE_PATH);
-      } else {
-        check.close();
-      }
-    }
+  // Fast RAM-cached size tracking (0 flash read overhead on every write)
+  size_t lineBytes = line.length() + 2;
+  if (currentFlashLogBytes + lineBytes > MAX_LOG_FILE_BYTES) {
+    SPIFFS.remove(LOG_FILE_PATH);
+    currentFlashLogBytes = 0;
   }
 
   File f = SPIFFS.open(LOG_FILE_PATH, FILE_APPEND);
   if (f) {
     f.println(line);
     f.close();
+    currentFlashLogBytes += lineBytes;
   }
 }
 
 void dumpLogsToSerial() {
-  Serial.println("\n========================================================");
-  Serial.println("📜 [START OF ESP32 SPIFFS FLASH LOG DUMP]");
-  Serial.println("========================================================");
-  if (SPIFFS.begin(true) && SPIFFS.exists(LOG_FILE_PATH)) {
+  DEBUG_PORT.println("\n========================================================");
+  DEBUG_PORT.println("📜 [START OF ESP32 SPIFFS FLASH LOG DUMP]");
+  DEBUG_PORT.println("========================================================");
+  if (spiffsMounted && SPIFFS.exists(LOG_FILE_PATH)) {
     File f = SPIFFS.open(LOG_FILE_PATH, FILE_READ);
     if (f) {
+      char buf[256];
       while (f.available()) {
-        Serial.write(f.read());
+        size_t bytesRead = f.readBytes(buf, sizeof(buf));
+        DEBUG_PORT.write((const uint8_t*)buf, bytesRead);
       }
       f.close();
     }
   } else {
-    Serial.println("⚠️ Файл логів /obd_debug.log ще не створено або він пустий.");
+    DEBUG_PORT.println("⚠️ Файл логів /obd_debug.log ще не створено або він пустий.");
   }
-  Serial.println("\n========================================================");
-  Serial.println("📜 [END OF ESP32 SPIFFS FLASH LOG DUMP]");
-  Serial.println("========================================================\n");
+  DEBUG_PORT.println("\n========================================================");
+  DEBUG_PORT.println("📜 [END OF ESP32 SPIFFS FLASH LOG DUMP]");
+  DEBUG_PORT.println("========================================================\n");
 }
 
 // --- Forward Declarations ---
-void sendLog(String message, String level = "info", String bt_status = "");
+void sendLog(const String& message, const String& level = "info", const String& bt_status = "");
 void flushLogsToServer();
 void checkWiFi();
 
@@ -224,7 +234,7 @@ void flushLogsToServer() {
   }
 }
 
-void sendLog(String message, String level, String bt_status) {
+void sendLog(const String& message, const String& level, const String& bt_status) {
   String timestampStr = "[" + String(millis() / 1000) + "s] [" + level + "] " + message;
   DEBUG_PORT.println(timestampStr);
   writeLogToFlash(timestampStr);
@@ -454,8 +464,9 @@ void setup() {
   DEBUG_PORT.begin(115200);
   delay(300);
 
-  if (SPIFFS.begin(true)) {
-    DEBUG_PORT.println("💾 Flash-пам'ять SPIFFS успішно змонтовано.");
+  initSpiffsLogging();
+  if (spiffsMounted) {
+    DEBUG_PORT.println("💾 Flash-пам'ять SPIFFS успішно змонтовано (активний кеш розміру).");
     writeLogToFlash("\n--- [ESP32 BOOT / POWER ON] ---");
   } else {
     DEBUG_PORT.println("⚠️ Помилка монтування SPIFFS");

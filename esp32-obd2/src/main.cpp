@@ -11,6 +11,8 @@
 #include <WiFiClientSecure.h>
 #include <vector>
 #include <time.h>
+#include <FS.h>
+#include <SPIFFS.h>
 
 #include "esp_bt_main.h"
 #include "esp_gap_bt_api.h"
@@ -28,6 +30,53 @@ const char* serverUrlBase = SECRET_SERVER_URL;
 const char* elmName = SECRET_ELM_NAME;
 const char* elmPin = SECRET_ELM_PIN;
 uint8_t elmMac[6] = SECRET_ELM_MAC;
+
+// --- Persistent Flash Logging (Survives Power Loss / Reboots) ---
+const char* LOG_FILE_PATH = "/obd_debug.log";
+const size_t MAX_LOG_FILE_BYTES = 65536; // 64 KB maximum log file size in Flash
+
+void writeLogToFlash(const String& line) {
+  if (!SPIFFS.begin(true)) return;
+  
+  // Rotate if log exceeds max size
+  if (SPIFFS.exists(LOG_FILE_PATH)) {
+    File check = SPIFFS.open(LOG_FILE_PATH, FILE_READ);
+    if (check) {
+      if (check.size() > MAX_LOG_FILE_BYTES) {
+        check.close();
+        SPIFFS.remove(LOG_FILE_PATH);
+      } else {
+        check.close();
+      }
+    }
+  }
+
+  File f = SPIFFS.open(LOG_FILE_PATH, FILE_APPEND);
+  if (f) {
+    f.println(line);
+    f.close();
+  }
+}
+
+void dumpLogsToSerial() {
+  Serial.println("\n========================================================");
+  Serial.println("📜 [START OF ESP32 SPIFFS FLASH LOG DUMP]");
+  Serial.println("========================================================");
+  if (SPIFFS.begin(true) && SPIFFS.exists(LOG_FILE_PATH)) {
+    File f = SPIFFS.open(LOG_FILE_PATH, FILE_READ);
+    if (f) {
+      while (f.available()) {
+        Serial.write(f.read());
+      }
+      f.close();
+    }
+  } else {
+    Serial.println("⚠️ Файл логів /obd_debug.log ще не створено або він пустий.");
+  }
+  Serial.println("\n========================================================");
+  Serial.println("📜 [END OF ESP32 SPIFFS FLASH LOG DUMP]");
+  Serial.println("========================================================\n");
+}
 
 // --- Forward Declarations ---
 void sendLog(String message, String level = "info", String bt_status = "");
@@ -176,7 +225,9 @@ void flushLogsToServer() {
 }
 
 void sendLog(String message, String level, String bt_status) {
-  DEBUG_PORT.println("[" + level + "] " + message);
+  String timestampStr = "[" + String(millis() / 1000) + "s] [" + level + "] " + message;
+  DEBUG_PORT.println(timestampStr);
+  writeLogToFlash(timestampStr);
 
   LogEntry entry = {message, level, bt_status};
   logQueue.push_back(entry);
@@ -403,9 +454,17 @@ void setup() {
   DEBUG_PORT.begin(115200);
   delay(300);
 
+  if (SPIFFS.begin(true)) {
+    DEBUG_PORT.println("💾 Flash-пам'ять SPIFFS успішно змонтовано.");
+    writeLogToFlash("\n--- [ESP32 BOOT / POWER ON] ---");
+  } else {
+    DEBUG_PORT.println("⚠️ Помилка монтування SPIFFS");
+  }
+
   DEBUG_PORT.println("\n\n========================================");
   DEBUG_PORT.println("🚗 ESP32 Pajero 4 OBD2 Telemetry Logger");
   DEBUG_PORT.printf("Free Heap: %d KB\n", (int)(ESP.getFreeHeap() / 1024));
+  DEBUG_PORT.println("💡 Введіть 'DUMP' у Serial для вивантаження логу з Flash-пам'яті");
   DEBUG_PORT.println("========================================");
 
   telemetryBuffer.reserve(MAX_BUFFER_SIZE);
@@ -429,6 +488,18 @@ void setup() {
 }
 
 void loop() {
+  // 0. Process USB Serial debug commands ('DUMP', 'CLEAR')
+  if (DEBUG_PORT.available()) {
+    String cmd = DEBUG_PORT.readStringUntil('\n');
+    cmd.trim();
+    if (cmd.equalsIgnoreCase("DUMP") || cmd.equalsIgnoreCase("LOGS") || cmd.equalsIgnoreCase("GET_LOGS") || cmd.equalsIgnoreCase("LOG")) {
+      dumpLogsToSerial();
+    } else if (cmd.equalsIgnoreCase("CLEAR") || cmd.equalsIgnoreCase("CLEAR_LOGS")) {
+      SPIFFS.remove(LOG_FILE_PATH);
+      DEBUG_PORT.println("✅ Flash-лог /obd_debug.log успішно очищено.");
+    }
+  }
+
   // 1. Monitor Wi-Fi state & handle non-blocking auto-reconnects
   checkWiFi();
 

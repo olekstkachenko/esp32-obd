@@ -23,6 +23,10 @@
   #include "secrets.example.h"
 #endif
 
+BluetoothSerial SerialBT;
+#define ELM_PORT SerialBT
+#define DEBUG_PORT Serial
+
 // --- Configuration loaded from secrets.h (ignored in Git) ---
 const char* ssid = SECRET_WIFI_SSID;
 const char* password = SECRET_WIFI_PASSWORD;
@@ -103,10 +107,6 @@ void clearBluetoothBonds() {
     }
   }
 }
-
-BluetoothSerial SerialBT;
-#define ELM_PORT SerialBT
-#define DEBUG_PORT Serial
 
 ELM327 myELM327;
 

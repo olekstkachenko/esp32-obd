@@ -68,16 +68,25 @@ function initDatabase() {
       temp REAL,
       voltage REAL,
       fuel_rate REAL,
+      lat REAL,
+      lon REAL,
+      alt REAL,
+      sat INTEGER,
       FOREIGN KEY (trip_id) REFERENCES trips (id) ON DELETE CASCADE
     )`);
 
     // Schema migrations for obd_records
     db.run(`ALTER TABLE obd_records ADD COLUMN fuel_rate REAL`, () => {});
     db.run(`ALTER TABLE obd_records ADD COLUMN trip_id INTEGER`, () => {});
+    db.run(`ALTER TABLE obd_records ADD COLUMN lat REAL`, () => {});
+    db.run(`ALTER TABLE obd_records ADD COLUMN lon REAL`, () => {});
+    db.run(`ALTER TABLE obd_records ADD COLUMN alt REAL`, () => {});
+    db.run(`ALTER TABLE obd_records ADD COLUMN sat INTEGER`, () => {});
 
     // 4. Performance Indexes
     db.run(`CREATE INDEX IF NOT EXISTS idx_obd_records_trip_id ON obd_records (trip_id)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_obd_records_timestamp ON obd_records (id DESC)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_obd_records_gps ON obd_records (trip_id, lat, lon)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_trips_status ON trips (status)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_trips_id_desc ON trips (id DESC)`);
 

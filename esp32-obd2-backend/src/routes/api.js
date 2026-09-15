@@ -19,10 +19,12 @@ const latestDeviceStatus = {
 // 1. Device Diagnostics Endpoint
 router.post('/device/log', (req, res) => {
   const { message, level, bt_status, wifi_status, free_heap, rssi, ip } = req.body;
-  const timestamp = new Date().toLocaleTimeString('uk-UA');
+  const now = new Date();
+  const timestamp = now.toLocaleTimeString('uk-UA', { timeZone: 'Europe/Kyiv', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const iso = now.toISOString();
   
   if (message) {
-    deviceLogs.push({ timestamp, level: level || 'info', message: String(message) });
+    deviceLogs.push({ timestamp, iso, level: level || 'info', message: String(message) });
     if (deviceLogs.length > MAX_LOGS) deviceLogs.shift();
   }
 
@@ -70,7 +72,7 @@ router.delete('/device/logs', (req, res) => {
 
 // 2. Single OBD Record Ingestion from ESP32
 router.post('/obd', async (req, res) => {
-  const { rpm = 0, speed = 0, temp = 0, voltage = 0, fuel_rate = 0 } = req.body || {};
+  const { rpm = 0, speed = 0, temp = 0, voltage = 0, fuel_rate = 0, lat, lon, alt, sat } = req.body || {};
   const now = Date.now();
   
   const cleanRpm = Math.max(0, Math.min(10000, Number(rpm) || 0));
@@ -78,6 +80,10 @@ router.post('/obd', async (req, res) => {
   const cleanTemp = Math.max(-50, Math.min(150, Number(temp) || 0));
   const cleanVolt = Math.max(0, Math.min(30, Number(voltage) || 0));
   const cleanFuel = Math.max(0, Math.min(100, Number(fuel_rate) || 0));
+  const cleanLat = (lat !== undefined && lat !== null && !isNaN(lat) && Math.abs(lat) <= 90) ? Number(lat) : null;
+  const cleanLon = (lon !== undefined && lon !== null && !isNaN(lon) && Math.abs(lon) <= 180) ? Number(lon) : null;
+  const cleanAlt = (alt !== undefined && alt !== null && !isNaN(alt)) ? Number(alt) : null;
+  const cleanSat = (sat !== undefined && sat !== null && !isNaN(sat)) ? parseInt(sat, 10) : null;
 
   try {
     const tripId = await tripService.ensureActiveTrip();
@@ -86,8 +92,8 @@ router.post('/obd', async (req, res) => {
     tripService.setLastRecordTime(now);
 
     await db.runAsync(
-      `INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate) VALUES (?, ?, ?, ?, ?, ?)`,
-      [tripId, cleanRpm, cleanSpeed, cleanTemp, cleanVolt, cleanFuel]
+      `INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate, lat, lon, alt, sat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [tripId, cleanRpm, cleanSpeed, cleanTemp, cleanVolt, cleanFuel, cleanLat, cleanLon, cleanAlt, cleanSat]
     );
 
     await tripService.updateTripStats(tripId, cleanSpeed, cleanFuel, timeDiffSeconds);
@@ -114,7 +120,7 @@ router.post('/obd/batch', async (req, res) => {
     await new Promise((resolve, reject) => {
       db.serialize(() => {
         db.run('BEGIN TRANSACTION');
-        const stmt = db.prepare(`INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate) VALUES (?, ?, ?, ?, ?, ?)`);
+        const stmt = db.prepare(`INSERT INTO obd_records (trip_id, rpm, speed, temp, voltage, fuel_rate, lat, lon, alt, sat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
         for (const r of records) {
           const rpm = Math.max(0, Math.min(10000, Number(r.rpm) || 0));
@@ -123,6 +129,10 @@ router.post('/obd/batch', async (req, res) => {
           const volt = Math.max(0, Math.min(30, Number(r.voltage || r.volt) || 0));
           const fuel = Math.max(0, Math.min(100, Number(r.fuel_rate || r.fuel) || 0));
           const dt = (r.dt && Number(r.dt) > 0 && Number(r.dt) <= 60) ? Number(r.dt) : 1.0;
+          const lat = (r.lat !== undefined && r.lat !== null && !isNaN(r.lat) && Math.abs(r.lat) <= 90) ? Number(r.lat) : null;
+          const lon = (r.lon !== undefined && r.lon !== null && !isNaN(r.lon) && Math.abs(r.lon) <= 180) ? Number(r.lon) : null;
+          const alt = (r.alt !== undefined && r.alt !== null && !isNaN(r.alt)) ? Number(r.alt) : null;
+          const sat = (r.sat !== undefined && r.sat !== null && !isNaN(r.sat)) ? parseInt(r.sat, 10) : null;
 
           if (speed > batchMaxSpeed) batchMaxSpeed = speed;
 
@@ -135,7 +145,7 @@ router.post('/obd/batch', async (req, res) => {
             totalAddedFuel += (dist * 7.5) / 100.0;
           }
 
-          stmt.run(tripId, rpm, speed, temp, volt, fuel);
+          stmt.run(tripId, rpm, speed, temp, volt, fuel, lat, lon, alt, sat);
         }
 
         stmt.finalize();
@@ -300,16 +310,59 @@ router.get('/trips/:id', async (req, res) => {
     const trip = await db.getAsync(`SELECT * FROM trips WHERE id = ?`, [tripId]);
     if (!trip) return res.status(404).json({ error: 'Trip not found' });
 
-    const records = await db.allAsync(`SELECT timestamp, speed, rpm, temp, voltage FROM obd_records WHERE trip_id = ? ORDER BY id ASC`, [tripId]);
+    const records = await db.allAsync(`SELECT timestamp, speed, rpm, temp, voltage, lat, lon, alt, sat FROM obd_records WHERE trip_id = ? ORDER BY id ASC`, [tripId]);
 
     const dist = trip.distance_km || 0;
     const fuel = trip.fuel_liters || 0;
     trip.l_per_100km = dist > 0 ? parseFloat(((fuel / dist) * 100).toFixed(1)) : 0;
     trip.trip_cost_uah = parseFloat((fuel * fuelPrice).toFixed(2));
 
+    // Extract GPS summary
+    const gpsPoints = records.filter(r => r.lat !== null && r.lon !== null);
+    trip.has_gps = gpsPoints.length > 0;
+    trip.gps_points_count = gpsPoints.length;
+
     res.json({ trip, records });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 7.1 Export Trip Route to GPX 1.1 format
+router.get('/trips/:id/gpx', async (req, res) => {
+  const tripId = parseInt(req.params.id, 10);
+  if (isNaN(tripId)) return res.status(400).send('Invalid trip ID');
+
+  try {
+    const trip = await db.getAsync(`SELECT * FROM trips WHERE id = ?`, [tripId]);
+    if (!trip) return res.status(404).send('Trip not found');
+
+    const points = await db.allAsync(`SELECT timestamp, speed, alt, lat, lon FROM obd_records WHERE trip_id = ? AND lat IS NOT NULL AND lon IS NOT NULL ORDER BY id ASC`, [tripId]);
+
+    if (!points || points.length === 0) {
+      return res.status(404).send('No GPS route points found for this trip');
+    }
+
+    const startTime = trip.start_time || points[0].timestamp;
+    let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+    gpx += `<gpx version="1.1" creator="Telematics Pro OBD2 ESP32" xmlns="http://www.topografix.com/GPX/1/1">\n`;
+    gpx += `  <metadata>\n    <name>Поїздка #${tripId}</name>\n    <time>${new Date(startTime).toISOString()}</time>\n  </metadata>\n`;
+    gpx += `  <trk>\n    <name>Поїздка #${tripId} (${trip.distance_km || 0} km)</name>\n    <trkseg>\n`;
+
+    for (const p of points) {
+      const timeIso = p.timestamp ? (p.timestamp.includes('T') ? p.timestamp : new Date(p.timestamp.replace(' ', 'T') + 'Z').toISOString()) : new Date().toISOString();
+      const ele = p.alt ? `        <ele>${p.alt}</ele>\n` : '';
+      const speedMs = p.speed ? (p.speed / 3.6).toFixed(2) : '0.00';
+      gpx += `      <trkpt lat="${p.lat}" lon="${p.lon}">\n${ele}        <time>${timeIso}</time>\n        <speed>${speedMs}</speed>\n      </trkpt>\n`;
+    }
+
+    gpx += `    </trkseg>\n  </trk>\n</gpx>`;
+
+    res.setHeader('Content-Type', 'application/gpx+xml');
+    res.setHeader('Content-Disposition', `attachment; filename="trip-${tripId}.gpx"`);
+    res.send(gpx);
+  } catch (err) {
+    res.status(500).send('Error generating GPX: ' + err.message);
   }
 });
 

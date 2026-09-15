@@ -13,6 +13,7 @@
 #include <time.h>
 #include <FS.h>
 #include <SPIFFS.h>
+#include <TinyGPSPlus.h>
 
 #include "esp_bt.h"
 #include "esp_bt_main.h"
@@ -27,6 +28,19 @@
 BluetoothSerial SerialBT;
 #define ELM_PORT SerialBT
 #define DEBUG_PORT Serial
+
+// --- Hardware GPS Module (UART2: GPIO 16 RX, GPIO 17 TX) ---
+#define GPS_RX_PIN 16
+#define GPS_TX_PIN 17
+#define GPS_BAUD 9600
+HardwareSerial GPS_SERIAL(2);
+TinyGPSPlus gps;
+
+void readGps() {
+  while (GPS_SERIAL.available() > 0) {
+    gps.encode(GPS_SERIAL.read());
+  }
+}
 
 // --- Configuration loaded from secrets.h (ignored in Git) ---
 const char* ssid = SECRET_WIFI_SSID;
@@ -100,6 +114,11 @@ struct OBDRecord {
   float volt;
   float fuel;
   float dt;
+  float lat;
+  float lon;
+  float alt;
+  int sat;
+  bool hasGps;
 };
 
 struct LogEntry {
@@ -313,13 +332,19 @@ void flushBufferToServer() {
     if (dataMutex) xSemaphoreGive(dataMutex);
 
     String jsonPayload;
-    jsonPayload.reserve(128);
+    jsonPayload.reserve(192);
     jsonPayload = "{";
     jsonPayload += "\"rpm\":" + String(r.rpm, 1) + ",";
     jsonPayload += "\"speed\":" + String(r.speed, 1) + ",";
     jsonPayload += "\"temp\":" + String(r.temp, 1) + ",";
     jsonPayload += "\"voltage\":" + String(r.volt, 1) + ",";
     jsonPayload += "\"fuel_rate\":" + String(r.fuel, 1);
+    if (r.hasGps) {
+      jsonPayload += ",\"lat\":" + String(r.lat, 6);
+      jsonPayload += ",\"lon\":" + String(r.lon, 6);
+      jsonPayload += ",\"alt\":" + String(r.alt, 1);
+      jsonPayload += ",\"sat\":" + String(r.sat);
+    }
     jsonPayload += "}";
 
     int httpCode = 0;
@@ -349,7 +374,7 @@ void flushBufferToServer() {
     if (chunk.empty()) break;
 
     String jsonPayload;
-    jsonPayload.reserve(chunk.size() * 85 + 32);
+    jsonPayload.reserve(chunk.size() * 110 + 32);
     jsonPayload = "{\"records\":[";
     for (size_t i = 0; i < chunk.size(); i++) {
       const auto& r = chunk[i];
@@ -359,7 +384,14 @@ void flushBufferToServer() {
                      ",\"temp\":" + String(r.temp, 1) +
                      ",\"voltage\":" + String(r.volt, 1) +
                      ",\"fuel_rate\":" + String(r.fuel, 1) +
-                     ",\"dt\":" + String(r.dt, 1) + "}";
+                     ",\"dt\":" + String(r.dt, 1);
+      if (r.hasGps) {
+        jsonPayload += ",\"lat\":" + String(r.lat, 6);
+        jsonPayload += ",\"lon\":" + String(r.lon, 6);
+        jsonPayload += ",\"alt\":" + String(r.alt, 1);
+        jsonPayload += ",\"sat\":" + String(r.sat);
+      }
+      jsonPayload += "}";
     }
     jsonPayload += "]}";
 
@@ -624,10 +656,17 @@ void setup() {
     0 // Core 0
   );
   
+  // 4. Start Hardware GPS Module on UART2 (GPIO 16 RX, GPIO 17 TX)
+  GPS_SERIAL.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  DEBUG_PORT.println("🛰️ GPS UART2 ініціалізовано (GPIO 16 RX, GPIO 17 TX @ 9600)");
+
   sendLog("🚀 ESP32 успішно завантажено! Очікування старту точки доступу та сканера...", "info");
 }
 
 void loop() {
+  // Continuous non-blocking NMEA GPS parser
+  readGps();
+
   // 0. Process USB Serial debug commands ('DUMP', 'CLEAR', 'STATUS', 'REBOOT', 'HELP')
   if (DEBUG_PORT.available()) {
     String cmd = DEBUG_PORT.readStringUntil('\n');
@@ -643,6 +682,7 @@ void loop() {
       DEBUG_PORT.printf("Free Heap: %d KB\n", (int)(ESP.getFreeHeap() / 1024));
       DEBUG_PORT.printf("Wi-Fi: %s (IP: %s | RSSI: %d dBm)\n", (WiFi.status() == WL_CONNECTED ? "CONNECTED" : "OFFLINE"), WiFi.localIP().toString().c_str(), WiFi.RSSI());
       DEBUG_PORT.printf("Bluetooth: %s | ELM Init: %s\n", (SerialBT.connected() ? "CONNECTED" : "DISCONNECTED"), (elmInitialized ? "YES" : "NO"));
+      DEBUG_PORT.printf("GPS Fix: %s (Sats: %d | Lat: %.5f, Lon: %.5f)\n", (gps.location.isValid() ? "YES" : "NO"), (int)gps.satellites.value(), gps.location.lat(), gps.location.lng());
       DEBUG_PORT.printf("Telemetry Buffer: %d records\n", (int)telemetryBuffer.size());
       DEBUG_PORT.printf("Flash Log: %d / %d bytes\n", (int)currentFlashLogBytes, (int)MAX_LOG_FILE_BYTES);
       DEBUG_PORT.println("---------------------------------\n");
@@ -654,7 +694,7 @@ void loop() {
       DEBUG_PORT.println("\n--- [ДОСТУПНІ КОМАНДИ SERIAL] ---");
       DEBUG_PORT.println("DUMP    - Вивантажити всі логи з Flash-пам'яті SPIFFS");
       DEBUG_PORT.println("CLEAR   - Очистити файл логів у Flash-пам'яті");
-      DEBUG_PORT.println("STATUS  - Показати стан зв'язку, пам'ять RAM та буфер");
+      DEBUG_PORT.println("STATUS  - Показати стан зв'язку, GPS, пам'ять RAM та буфер");
       DEBUG_PORT.println("REBOOT  - Перезавантажити ESP32");
       DEBUG_PORT.println("---------------------------------\n");
     }
@@ -712,14 +752,20 @@ void loop() {
       }
 
       if (volt > 0 || rpm > 0 || speed > 0 || temp > 0 || myELM327.nb_rx_state == ELM_SUCCESS) {
-        DEBUG_PORT.printf("✅ DATA: RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
-                          rpm, speed, temp, volt, fuel_rate, (int)telemetryBuffer.size());
+        bool hasFix = gps.location.isValid() && (gps.location.age() < 5000);
+        float curLat = hasFix ? (float)gps.location.lat() : 0.0f;
+        float curLon = hasFix ? (float)gps.location.lng() : 0.0f;
+        float curAlt = (hasFix && gps.altitude.isValid()) ? (float)gps.altitude.meters() : 0.0f;
+        int curSat = gps.satellites.isValid() ? (int)gps.satellites.value() : 0;
+
+        DEBUG_PORT.printf("✅ DATA: RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | GPS: %s | Buffer: %d\n", 
+                          rpm, speed, temp, volt, fuel_rate, (hasFix ? "FIX" : "NO_FIX"), (int)telemetryBuffer.size());
         
         if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
         if (telemetryBuffer.size() >= MAX_BUFFER_SIZE) {
           telemetryBuffer.erase(telemetryBuffer.begin());
         }
-        telemetryBuffer.push_back({rpm, speed, temp, volt, fuel_rate, dt});
+        telemetryBuffer.push_back({rpm, speed, temp, volt, fuel_rate, dt, curLat, curLon, curAlt, curSat, hasFix});
         if (dataMutex) xSemaphoreGive(dataMutex);
       }
     }

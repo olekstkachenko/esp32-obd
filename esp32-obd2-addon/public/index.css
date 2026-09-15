@@ -135,9 +135,11 @@ h1 {
 
 .metric-value .unit {
     font-size: 1.2rem;
-    font-weight: 400;
+    font-weight: 500;
     color: var(--text-secondary);
     -webkit-text-fill-color: var(--text-secondary); /* Override gradient for unit */
+    margin-left: 6px;
+    letter-spacing: 0.02em;
 }
 
 /* Chart Containers */
@@ -184,15 +186,26 @@ h1 {
 }
 .metric-mini .label {
     font-size: 0.8rem;
-    color: var(--text-secondary);
+    color: #94a3b8 !important;
     margin-bottom: 4px;
+    font-weight: 500;
 }
 .metric-mini .value {
     font-size: 1.5rem;
-    font-weight: 600;
+    font-weight: 700;
+    color: #ffffff !important;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
 }
 .metric-mini .value span {
-    color: var(--text-primary);
+    color: #ffffff !important;
+}
+.metric-mini .value .unit {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: #94a3b8 !important;
+    -webkit-text-fill-color: #94a3b8 !important;
 }
 
 /* Highlights */

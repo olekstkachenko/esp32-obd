@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "node --test tests/api.test.js tests/scenarios.test.js tests/flash-log.test.js tests/edge-cases.test.js tests/timezone-freshness.test.js tests/chunked-buffer.test.js tests/trip-stats.test.js",
+    "test": "node --test tests/api.test.js tests/scenarios.test.js tests/flash-log.test.js tests/edge-cases.test.js tests/timezone-freshness.test.js tests/chunked-buffer.test.js tests/trip-stats.test.js tests/gps-route.test.js",
+    "test:gps": "node --test tests/gps-route.test.js",
     "test:api": "node --test tests/api.test.js",
     "test:scenarios": "node --test tests/scenarios.test.js",
     "test:flash": "node --test tests/flash-log.test.js",

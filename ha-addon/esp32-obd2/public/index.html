@@ -29,6 +29,9 @@
             <button class="nav-tab" id="tabGasBtn" onclick="switchTab('gas')">
                 <span>⛽</span> Ціни АЗС
             </button>
+            <button class="nav-tab" id="tabDiagBtn" onclick="switchTab('diag')">
+                <span>🛠️</span> Діагностика ESP32
+            </button>
         </nav>
 
         <!-- Fuel Price Setting Widget -->
@@ -141,6 +144,57 @@
 
             <div id="gasStationsList" class="gas-stations-grid">
                 <!-- Gas station cards inserted dynamically -->
+            </div>
+        </div>
+
+        <!-- ================= DIAGNOSTICS VIEW ================= -->
+        <div id="viewDiag" style="display: none; flex-direction: column; gap: 20px;">
+            <div class="trips-header-bar">
+                <div>
+                    <div class="trip-header" style="font-size: 1.1rem; color: #fff;">🛠️ Діагностика та Телеметрія ESP32</div>
+                    <div id="diagLastUpdated" style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">Оновлення в реальному часі</div>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-sm" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" onclick="clearDeviceLogs()">🗑️ Очистити</button>
+                    <button class="btn-sm btn-primary" onclick="fetchDeviceStatus()">🔄 Оновити</button>
+                </div>
+            </div>
+
+            <!-- Device Health Cards -->
+            <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
+                <div class="metric-card glass-panel">
+                    <div class="metric-title">ESP32 Статус</div>
+                    <div class="metric-value" style="font-size: 1.05rem; margin-top: 6px;"><span id="diagOnlineStatus">--</span></div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <div class="metric-title">IP Адреса</div>
+                    <div class="metric-value" style="font-size: 1.0rem; margin-top: 6px;"><span id="diagIp">--</span></div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <div class="metric-title">Wi-Fi RSSI</div>
+                    <div class="metric-value" style="font-size: 1.05rem; margin-top: 6px;"><span id="diagRssi">--</span> <span class="unit">dBm</span></div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <div class="metric-title">Bluetooth OBD2</div>
+                    <div class="metric-value" style="font-size: 1.0rem; margin-top: 6px;"><span id="diagBtStatus">--</span></div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <div class="metric-title">Вільна RAM</div>
+                    <div class="metric-value" style="font-size: 1.05rem; margin-top: 6px;"><span id="diagRam">--</span> <span class="unit">KB</span></div>
+                </div>
+            </div>
+
+            <!-- Full Terminal Console -->
+            <div class="glass-panel" style="padding: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span style="font-weight: 600; font-size: 0.95rem; color: #fff; display: flex; align-items: center; gap: 8px;">
+                        <span>💻</span> Консоль подій прошивки ESP32
+                    </span>
+                    <span id="diagLogCount" style="font-size: 0.75rem; color: var(--text-secondary);">0 логів</span>
+                </div>
+                <div id="fullLogsConsole" style="background: rgba(10, 15, 29, 0.95); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 14px; font-family: 'Courier New', monospace; font-size: 0.8rem; height: 340px; overflow-y: auto; line-height: 1.6;">
+                    <div style="color: var(--text-secondary);">⏳ Очікування підключення ESP32...</div>
+                </div>
             </div>
         </div>
 
@@ -264,10 +318,12 @@
             document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
             document.getElementById('tabTripsBtn').classList.toggle('active', tab === 'trips');
             document.getElementById('tabGasBtn').classList.toggle('active', tab === 'gas');
+            document.getElementById('tabDiagBtn').classList.toggle('active', tab === 'diag');
             
             document.getElementById('viewLive').style.display = tab === 'live' ? 'flex' : 'none';
             document.getElementById('viewTrips').style.display = tab === 'trips' ? 'flex' : 'none';
             document.getElementById('viewGas').style.display = tab === 'gas' ? 'flex' : 'none';
+            document.getElementById('viewDiag').style.display = tab === 'diag' ? 'flex' : 'none';
 
             if (tab === 'live') {
                 startLiveTimers();
@@ -277,6 +333,8 @@
                     loadTrips();
                 } else if (tab === 'gas') {
                     loadGasStations();
+                } else if (tab === 'diag') {
+                    fetchDeviceStatus();
                 }
             }
         }
@@ -599,42 +657,103 @@
             }
         }
 
+        async function clearDeviceLogs() {
+            if (!confirm('Очистити всі збережені логи ESP32?')) return;
+            try {
+                await fetch(apiUrl('api/device/logs'), { method: 'DELETE' });
+                fetchDeviceStatus();
+            } catch (err) {
+                alert('Помилка очищення логів');
+            }
+        }
+
         async function fetchDeviceStatus() {
             try {
                 const res = await fetch(apiUrl('api/device/status'));
                 const data = await res.json();
                 const logsEl = document.getElementById('espLogsConsole');
+                const fullLogsEl = document.getElementById('fullLogsConsole');
                 const badgeEl = document.getElementById('espStatusBadge');
 
-                if (data.status && data.status.bt && badgeEl) {
-                    const bt = data.status.bt;
-                    if (bt === 'connected') {
-                        badgeEl.className = 'trip-badge badge-active';
-                        badgeEl.style.background = 'rgba(34, 197, 94, 0.2)';
-                        badgeEl.style.color = '#4ade80';
-                        badgeEl.innerText = '🟢 Bluetooth OBD2 З’єднано';
-                    } else if (bt === 'connecting' || bt === 'scanning') {
-                        badgeEl.className = 'trip-badge badge-active';
-                        badgeEl.style.background = 'rgba(234, 179, 8, 0.2)';
-                        badgeEl.style.color = '#facc15';
-                        badgeEl.innerText = '🟡 Пошук / Підключення Bluetooth...';
+                const status = data.status || {};
+                const now = Date.now();
+                const lastSeenMs = status.last_seen ? new Date(status.last_seen).getTime() : 0;
+                const isOnline = lastSeenMs > 0 && (now - lastSeenMs < 35000);
+
+                // Top Badge
+                if (badgeEl) {
+                    if (isOnline) {
+                        const bt = status.bt || 'disconnected';
+                        if (bt === 'connected') {
+                            badgeEl.className = 'trip-badge badge-active';
+                            badgeEl.style.background = 'rgba(34, 197, 94, 0.2)';
+                            badgeEl.style.color = '#4ade80';
+                            badgeEl.innerText = '🟢 ESP32 Онлайн | OBD2 З’єднано';
+                        } else if (bt === 'connecting' || bt === 'scanning') {
+                            badgeEl.className = 'trip-badge badge-active';
+                            badgeEl.style.background = 'rgba(234, 179, 8, 0.2)';
+                            badgeEl.style.color = '#facc15';
+                            badgeEl.innerText = '🟡 ESP32 Онлайн | Пошук OBD2...';
+                        } else {
+                            badgeEl.className = 'trip-badge badge-active';
+                            badgeEl.style.background = 'rgba(59, 130, 246, 0.2)';
+                            badgeEl.style.color = '#60a5fa';
+                            badgeEl.innerText = '🟢 ESP32 Онлайн | Wi-Fi є';
+                        }
                     } else {
                         badgeEl.className = 'trip-badge badge-completed';
                         badgeEl.style.background = 'rgba(239, 68, 68, 0.2)';
                         badgeEl.style.color = '#f87171';
-                        badgeEl.innerText = '🔴 Bluetooth Не підключено';
+                        badgeEl.innerText = '🔴 ESP32 Офлайн';
                     }
                 }
 
-                if (data.logs && data.logs.length > 0 && logsEl) {
-                    logsEl.innerHTML = data.logs.map(l => {
+                // Diagnostics Tab cards
+                const diagOnline = document.getElementById('diagOnlineStatus');
+                if (diagOnline) {
+                    diagOnline.innerHTML = isOnline 
+                        ? '<span style="color:#4ade80;">🟢 Онлайн</span>' 
+                        : '<span style="color:#f87171;">🔴 Офлайн</span>';
+                }
+                const diagIp = document.getElementById('diagIp');
+                if (diagIp) diagIp.innerText = status.ip || '--';
+
+                const diagRssi = document.getElementById('diagRssi');
+                if (diagRssi) diagRssi.innerText = status.rssi !== null && status.rssi !== undefined ? status.rssi : '--';
+
+                const diagBt = document.getElementById('diagBtStatus');
+                if (diagBt) {
+                    const bt = status.bt;
+                    if (bt === 'connected') diagBt.innerHTML = '<span style="color:#4ade80;">✓ Підключено</span>';
+                    else if (bt === 'connecting' || bt === 'scanning') diagBt.innerHTML = '<span style="color:#facc15;">⏳ Пошук...</span>';
+                    else diagBt.innerHTML = '<span style="color:#94a3b8;">Відключено</span>';
+                }
+
+                const diagRam = document.getElementById('diagRam');
+                if (diagRam) diagRam.innerText = status.free_heap || '--';
+
+                const logCountEl = document.getElementById('diagLogCount');
+                if (logCountEl) logCountEl.innerText = `${data.logs ? data.logs.length : 0} записів`;
+
+                // Render Logs in both consoles
+                if (data.logs && data.logs.length > 0) {
+                    const formattedHtml = data.logs.map(l => {
                         let color = '#38bdf8';
-                        if (l.level === 'warn') color = '#facc15';
-                        if (l.level === 'error') color = '#f87171';
-                        if (l.level === 'success') color = '#4ade80';
-                        return `<div style="color: ${color}; margin-bottom: 2px;">[${l.timestamp}] ${l.message}</div>`;
+                        let prefix = 'ℹ️';
+                        if (l.level === 'warn') { color = '#facc15'; prefix = '⚠️'; }
+                        if (l.level === 'error') { color = '#f87171'; prefix = '❌'; }
+                        if (l.level === 'success') { color = '#4ade80'; prefix = '✅'; }
+                        return `<div style="color: ${color}; margin-bottom: 3px;">[${l.timestamp}] ${prefix} ${l.message}</div>`;
                     }).join('');
-                    logsEl.scrollTop = logsEl.scrollHeight;
+
+                    if (logsEl) {
+                        logsEl.innerHTML = formattedHtml;
+                        logsEl.scrollTop = logsEl.scrollHeight;
+                    }
+                    if (fullLogsEl) {
+                        fullLogsEl.innerHTML = formattedHtml;
+                        fullLogsEl.scrollTop = fullLogsEl.scrollHeight;
+                    }
                 }
             } catch(err) {}
         }

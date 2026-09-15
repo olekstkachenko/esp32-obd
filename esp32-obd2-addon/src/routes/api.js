@@ -5,17 +5,20 @@ const tripService = require('../services/tripService');
 const fuelScraper = require('../services/fuelScraper');
 
 // In-Memory Ring Buffer for ESP32 Diagnostic Logs
-const MAX_LOGS = 100;
+const MAX_LOGS = 200;
 const deviceLogs = [];
 const latestDeviceStatus = {
   wifi: 'unknown',
   bt: 'disconnected',
+  ip: '--',
+  free_heap: '--',
+  rssi: null,
   last_seen: null
 };
 
 // 1. Device Diagnostics Endpoint
 router.post('/device/log', (req, res) => {
-  const { message, level, bt_status, wifi_status } = req.body;
+  const { message, level, bt_status, wifi_status, free_heap, rssi, ip } = req.body;
   const timestamp = new Date().toLocaleTimeString('uk-UA');
   
   if (message) {
@@ -25,9 +28,12 @@ router.post('/device/log', (req, res) => {
 
   if (bt_status) latestDeviceStatus.bt = String(bt_status);
   if (wifi_status) latestDeviceStatus.wifi = String(wifi_status);
+  if (free_heap !== undefined) latestDeviceStatus.free_heap = free_heap;
+  if (rssi !== undefined) latestDeviceStatus.rssi = rssi;
+  if (ip) latestDeviceStatus.ip = String(ip);
   latestDeviceStatus.last_seen = new Date().toISOString();
 
-  res.json({ success: true });
+  res.json({ success: true, count: deviceLogs.length });
 });
 
 router.get('/device/status', (req, res) => {
@@ -35,6 +41,11 @@ router.get('/device/status', (req, res) => {
     status: latestDeviceStatus,
     logs: deviceLogs
   });
+});
+
+router.delete('/device/logs', (req, res) => {
+  deviceLogs.length = 0;
+  res.json({ success: true, message: 'Logs cleared' });
 });
 
 // 2. Single OBD Record Ingestion from ESP32

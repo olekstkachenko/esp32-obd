@@ -26,6 +26,7 @@ uint8_t elmMac[6] = SECRET_ELM_MAC;
 // --- Forward Declarations ---
 void sendLog(String message, String level = "info", String bt_status = "");
 void flushLogsToServer();
+void checkWiFi();
 
 void clearBluetoothBonds() {
   int dev_num = esp_bt_gap_get_bond_device_num();
@@ -71,7 +72,7 @@ struct LogEntry {
 std::vector<LogEntry> logQueue;
 
 // =========================================================================
-// 🚀 Robust HTTP/HTTPS POST Handler with Minimal TLS RAM Allocation
+// 🚀 Robust HTTP/HTTPS POST Handler (Optimized for 4G/Mobile Hotspots)
 // =========================================================================
 bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
   if (WiFi.status() != WL_CONNECTED) {
@@ -80,15 +81,15 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
   }
 
   HTTPClient http;
-  http.setTimeout(3500); // 3.5s timeout prevents blocking loop
+  http.setTimeout(6000); // 6s timeout allows stable cellular 4G TLS handshakes
   http.setReuse(false);
 
   bool isHttps = url.startsWith("https://");
 
   if (isHttps) {
     WiFiClientSecure client;
-    client.setInsecure(); // Accept self-signed / Ngrok / Cloudflare SSL
-    client.setTimeout(4);
+    client.setInsecure(); // Accept Ngrok / Cloudflare SSL certificates
+    client.setTimeout(6);
 
     if (!http.begin(client, url)) {
       DEBUG_PORT.printf("❌ [HTTP HTTPS] http.begin failed: %s\n", url.c_str());
@@ -104,7 +105,7 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
     http.end();
   } else {
     WiFiClient client;
-    client.setTimeout(4);
+    client.setTimeout(6);
 
     if (!http.begin(client, url)) {
       DEBUG_PORT.printf("❌ [HTTP Plain] http.begin failed: %s\n", url.c_str());
@@ -144,7 +145,8 @@ void flushLogsToServer() {
     json += "\"level\":\"" + entry.level + "\",";
     json += "\"wifi_status\":\"connected\",";
     json += "\"free_heap\":" + String(ESP.getFreeHeap() / 1024) + ",";
-    json += "\"rssi\":" + String(WiFi.RSSI());
+    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+    json += "\"ip\":\"" + WiFi.localIP().toString() + "\"";
     if (entry.bt_status.length() > 0) {
       json += ",\"bt_status\":\"" + entry.bt_status + "\"";
     }
@@ -336,7 +338,7 @@ void ensureELMConnected() {
     elmConnected = false;
     elmInitialized = false;
     
-    if (millis() - lastELMRetry > 8000) {
+    if (millis() - lastELMRetry > 10000) {
       lastELMRetry = millis();
       if (connectToELM327()) {
         elmConnected = true;
@@ -397,11 +399,24 @@ void setup() {
   telemetryBuffer.reserve(MAX_BUFFER_SIZE);
   logQueue.reserve(64);
 
+  // 1. Prioritize Wi-Fi connection to mobile hotspot
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
+  DEBUG_PORT.printf("Connecting to Mobile Hotspot '%s'...\n", ssid);
 
+  unsigned long startWait = millis();
+  while (WiFi.status() != WL_CONNECTED && (millis() - startWait < 4000)) {
+    delay(200);
+    DEBUG_PORT.print(".");
+  }
+  DEBUG_PORT.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    checkWiFi();
+  }
+
+  // 2. Start Bluetooth Master
   sendLog("🚀 ESP32 завантажено! Запуск Bluetooth Master...", "info");
-
   SerialBT.setPin(elmPin);
   ELM_PORT.begin("ESP32-OBD2", true); // Master mode
   DEBUG_PORT.println("📡 Bluetooth Master mode ready.");
@@ -411,9 +426,9 @@ void loop() {
   // 1. Monitor Wi-Fi state & handle reconnects
   checkWiFi();
 
-  // 2. Periodic log flushing (every 2 seconds)
+  // 2. Periodic log flushing (every 2.5 seconds)
   static unsigned long lastLogFlush = 0;
-  if (WiFi.status() == WL_CONNECTED && (millis() - lastLogFlush > 2000)) {
+  if (WiFi.status() == WL_CONNECTED && (millis() - lastLogFlush > 2500)) {
     lastLogFlush = millis();
     flushLogsToServer();
   }

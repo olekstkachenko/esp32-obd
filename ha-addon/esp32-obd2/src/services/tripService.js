@@ -48,7 +48,9 @@ async function ensureActiveTrip() {
 }
 
 async function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
-  const cleanSpeed = Math.max(0, Math.min(220, Number(speedKmh) || 0));
+  // Pajero 4 physical speed cap (185 km/h) to filter out ELM327 glitches (e.g. 255 km/h artifacts)
+  const rawSpeed = Number(speedKmh) || 0;
+  const cleanSpeed = (rawSpeed >= 0 && rawSpeed <= 185) ? rawSpeed : (rawSpeed > 185 ? 0 : 0);
   const validDt = (timeDiffSeconds > 0 && timeDiffSeconds <= 60) ? Number(timeDiffSeconds) : 0;
   const distanceKm = (cleanSpeed > 0 && validDt > 0) ? (cleanSpeed * (validDt / 3600.0)) : 0;
   
@@ -63,10 +65,10 @@ async function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
     UPDATE trips SET 
       distance_km = distance_km + ?, 
       fuel_liters = fuel_liters + ?,
-      avg_speed = (SELECT COALESCE(AVG(speed), 0) FROM obd_records WHERE trip_id = ? AND speed > 0),
-      max_speed = MAX(COALESCE(max_speed, 0), ?)
+      avg_speed = (SELECT COALESCE(AVG(speed), 0) FROM obd_records WHERE trip_id = ? AND speed > 0 AND speed <= 185),
+      max_speed = (SELECT COALESCE(MAX(speed), 0) FROM obd_records WHERE trip_id = ? AND speed <= 185)
     WHERE id = ?`, 
-    [distanceKm, addedFuel, tripId, cleanSpeed, tripId]
+    [distanceKm, addedFuel, tripId, tripId, tripId]
   );
 }
 

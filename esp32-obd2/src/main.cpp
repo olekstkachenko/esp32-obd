@@ -756,8 +756,12 @@ void loop() {
       case STATE_SPEED: {
         int32_t s = myELM327.kph();
         if (myELM327.nb_rx_state == ELM_SUCCESS) {
-          if (s >= 0 && s <= 220) {
-            liveSpeed = (float)s;
+          // Pajero 4 physical cap: 185 km/h. Discard ELM327 artifacts (e.g. 255 / 300 km/h)
+          if (s >= 0 && s <= 185) {
+            // Delta-V glitch protection: ignore instant acceleration jump > 35 km/h per second
+            if (liveSpeed <= 0.0f || s <= (int32_t)liveSpeed || ((float)s - liveSpeed) <= 35.0f) {
+              liveSpeed = (float)s;
+            }
           }
           if (millis() - lastSlowQuery > 4000) {
             obdState = STATE_COOLANT;

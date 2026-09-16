@@ -48,7 +48,7 @@ async function ensureActiveTrip() {
 }
 
 async function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
-  const cleanSpeed = Math.max(0, Math.min(300, Number(speedKmh) || 0));
+  const cleanSpeed = Math.max(0, Math.min(220, Number(speedKmh) || 0));
   const validDt = (timeDiffSeconds > 0 && timeDiffSeconds <= 60) ? Number(timeDiffSeconds) : 0;
   const distanceKm = (cleanSpeed > 0 && validDt > 0) ? (cleanSpeed * (validDt / 3600.0)) : 0;
   

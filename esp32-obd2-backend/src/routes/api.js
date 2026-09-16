@@ -76,7 +76,7 @@ router.post('/obd', async (req, res) => {
   const now = Date.now();
   
   const cleanRpm = Math.max(0, Math.min(10000, Number(rpm) || 0));
-  const cleanSpeed = Math.max(0, Math.min(300, Number(speed) || 0));
+  const cleanSpeed = Math.max(0, Math.min(220, Number(speed) || 0));
   const cleanTemp = Math.max(-50, Math.min(150, Number(temp) || 0));
   const cleanVolt = Math.max(0, Math.min(30, Number(voltage) || 0));
   const cleanFuel = Math.max(0, Math.min(100, Number(fuel_rate) || 0));
@@ -124,7 +124,7 @@ router.post('/obd/batch', async (req, res) => {
 
         for (const r of records) {
           const rpm = Math.max(0, Math.min(10000, Number(r.rpm) || 0));
-          const speed = Math.max(0, Math.min(300, Number(r.speed) || 0));
+          const speed = Math.max(0, Math.min(220, Number(r.speed) || 0));
           const temp = Math.max(-50, Math.min(150, Number(r.temp) || 0));
           const volt = Math.max(0, Math.min(30, Number(r.voltage || r.volt) || 0));
           const fuel = Math.max(0, Math.min(100, Number(r.fuel_rate || r.fuel) || 0));

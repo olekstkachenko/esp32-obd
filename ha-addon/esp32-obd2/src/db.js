@@ -156,6 +156,24 @@ function initDatabase() {
         }
       }
     });
+
+    // 9. Auto-fix historical speed glitches > 185 km/h and recalculate stats
+    db.run(`UPDATE obd_records SET speed = 0 WHERE speed > 185`);
+    db.run(`
+      UPDATE trips SET 
+        max_speed = (SELECT COALESCE(MAX(speed), 0) FROM obd_records WHERE trip_id = trips.id AND speed <= 185),
+        avg_speed = (SELECT COALESCE(AVG(speed), 0) FROM obd_records WHERE trip_id = trips.id AND speed > 0 AND speed <= 185)
+      WHERE max_speed > 185 OR avg_speed > 185
+    `);
+
+    // 10. Auto-complete stale active trips
+    db.run(`
+      UPDATE trips 
+      SET status = 'completed', 
+          end_time = COALESCE((SELECT MAX(timestamp) FROM obd_records WHERE trip_id = trips.id), start_time)
+      WHERE status = 'active' 
+        AND (strftime('%s', 'now') - strftime('%s', COALESCE((SELECT MAX(timestamp) FROM obd_records WHERE trip_id = trips.id), start_time))) > 900
+    `);
   });
 }
 

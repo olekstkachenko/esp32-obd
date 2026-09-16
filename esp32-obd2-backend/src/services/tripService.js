@@ -15,17 +15,42 @@ function setLastRecordTime(time) {
   lastRecordTime = time;
 }
 
-// Ensures an active trip exists. Auto-expires idle trips older than 30 mins.
+// Auto-closes any active trips that haven't received telemetry for > 15 minutes
+async function autoCloseStaleTrips() {
+  const TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+  const now = Date.now();
+
+  const staleTrips = await db.allAsync(`
+    SELECT t.id, 
+           MAX(r.timestamp) as last_rec_time,
+           t.start_time
+    FROM trips t
+    LEFT JOIN obd_records r ON r.trip_id = t.id
+    WHERE t.status = 'active'
+    GROUP BY t.id
+  `);
+
+  for (const t of (staleTrips || [])) {
+    const rawTime = t.last_rec_time || t.start_time;
+    if (rawTime) {
+      const timeMs = new Date(rawTime.endsWith('Z') ? rawTime : rawTime + 'Z').getTime();
+      if (!isNaN(timeMs) && (now - timeMs > TIMEOUT_MS)) {
+        const endTime = t.last_rec_time || t.start_time || new Date().toISOString();
+        await db.runAsync(`UPDATE trips SET status = 'completed', end_time = ? WHERE id = ?`, [endTime, t.id]);
+        if (currentTripId === t.id) {
+          currentTripId = null;
+          lastRecordTime = null;
+        }
+        console.log(`[TripService] Auto-completed stale Trip #${t.id} (end_time: ${endTime})`);
+      }
+    }
+  }
+}
+
+// Ensures an active trip exists. Auto-expires idle trips older than 15 mins.
 async function ensureActiveTrip() {
   const now = Date.now();
-  const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-
-  // Auto-complete idle trips
-  if (currentTripId && lastRecordTime && (now - lastRecordTime > TIMEOUT_MS)) {
-    console.log(`[TripService] Auto-completing idle Trip #${currentTripId}`);
-    await db.runAsync(`UPDATE trips SET status = 'completed', end_time = CURRENT_TIMESTAMP WHERE id = ?`, [currentTripId]);
-    currentTripId = null;
-  }
+  await autoCloseStaleTrips();
 
   if (currentTripId) {
     return currentTripId;
@@ -50,7 +75,7 @@ async function ensureActiveTrip() {
 async function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
   // Pajero 4 physical speed cap (185 km/h) to filter out ELM327 glitches (e.g. 255 km/h artifacts)
   const rawSpeed = Number(speedKmh) || 0;
-  const cleanSpeed = (rawSpeed >= 0 && rawSpeed <= 185) ? rawSpeed : (rawSpeed > 185 ? 0 : 0);
+  const cleanSpeed = (rawSpeed >= 0 && rawSpeed <= 185) ? rawSpeed : 0;
   const validDt = (timeDiffSeconds > 0 && timeDiffSeconds <= 60) ? Number(timeDiffSeconds) : 0;
   const distanceKm = (cleanSpeed > 0 && validDt > 0) ? (cleanSpeed * (validDt / 3600.0)) : 0;
   
@@ -73,14 +98,22 @@ async function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
 }
 
 async function finishCurrentTrip() {
-  if (!currentTripId) return null;
+  let tripIdToFinish = currentTripId;
+  if (!tripIdToFinish) {
+    const row = await db.getAsync(`SELECT id FROM trips WHERE status = 'active' ORDER BY id DESC LIMIT 1`);
+    if (row) tripIdToFinish = row.id;
+  }
   
-  const finishedId = currentTripId;
-  await db.runAsync(`UPDATE trips SET status = 'completed', end_time = CURRENT_TIMESTAMP WHERE id = ?`, [finishedId]);
+  if (!tripIdToFinish) return null;
+  
+  const lastRec = await db.getAsync(`SELECT timestamp FROM obd_records WHERE trip_id = ? ORDER BY id DESC LIMIT 1`, [tripIdToFinish]);
+  const endTime = (lastRec && lastRec.timestamp) ? lastRec.timestamp : new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+  await db.runAsync(`UPDATE trips SET status = 'completed', end_time = ? WHERE id = ?`, [endTime, tripIdToFinish]);
   currentTripId = null;
   lastRecordTime = null;
-  console.log(`[TripService] Manually finished Trip #${finishedId}`);
-  return finishedId;
+  console.log(`[TripService] Manually finished Trip #${tripIdToFinish} with end_time: ${endTime}`);
+  return tripIdToFinish;
 }
 
 function reset() {
@@ -92,6 +125,7 @@ module.exports = {
   getCurrentTripId,
   getLastRecordTime,
   setLastRecordTime,
+  autoCloseStaleTrips,
   ensureActiveTrip,
   updateTripStats,
   finishCurrentTrip,

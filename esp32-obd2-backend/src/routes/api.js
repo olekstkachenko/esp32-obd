@@ -260,6 +260,8 @@ router.get('/history', async (req, res) => {
 // 6. Trips Archive with Fuel Cost Calculations
 router.get('/trips', async (req, res) => {
   try {
+    await tripService.autoCloseStaleTrips();
+
     const settingRow = await db.getAsync(`SELECT value FROM settings WHERE key = 'fuel_price'`);
     const fuelPrice = parseFloat(settingRow ? settingRow.value : '58.50') || 58.50;
 
@@ -280,15 +282,17 @@ router.get('/trips', async (req, res) => {
 
     const rows = await db.allAsync(sql);
     const trips = rows.map((r) => {
-      const dist = r.distance_km || 0;
-      const fuel = r.fuel_liters || 0;
-      const l_per_100km = dist > 0 ? (fuel / dist) * 100 : 0;
-      const trip_cost_uah = fuel * fuelPrice;
+      const dist = parseFloat(Number(r.distance_km || 0).toFixed(2));
+      const fuel = parseFloat(Number(r.fuel_liters || 0).toFixed(2));
+      const l_per_100km = dist > 0 ? parseFloat(((fuel / dist) * 100).toFixed(1)) : 0;
+      const trip_cost_uah = parseFloat((fuel * fuelPrice).toFixed(2));
 
       return {
         ...r,
-        l_per_100km: parseFloat(l_per_100km.toFixed(1)),
-        trip_cost_uah: parseFloat(trip_cost_uah.toFixed(2))
+        distance_km: dist,
+        fuel_liters: fuel,
+        l_per_100km,
+        trip_cost_uah
       };
     });
 
@@ -312,8 +316,12 @@ router.get('/trips/:id', async (req, res) => {
 
     const records = await db.allAsync(`SELECT timestamp, speed, rpm, temp, voltage, lat, lon, alt, sat FROM obd_records WHERE trip_id = ? ORDER BY id ASC`, [tripId]);
 
-    const dist = trip.distance_km || 0;
-    const fuel = trip.fuel_liters || 0;
+    const dist = parseFloat(Number(trip.distance_km || 0).toFixed(2));
+    const fuel = parseFloat(Number(trip.fuel_liters || 0).toFixed(2));
+    trip.distance_km = dist;
+    trip.fuel_liters = fuel;
+    trip.avg_speed = parseFloat(Number(trip.avg_speed || 0).toFixed(1));
+    trip.max_speed = parseFloat(Number(trip.max_speed || 0).toFixed(1));
     trip.l_per_100km = dist > 0 ? parseFloat(((fuel / dist) * 100).toFixed(1)) : 0;
     trip.trip_cost_uah = parseFloat((fuel * fuelPrice).toFixed(2));
 

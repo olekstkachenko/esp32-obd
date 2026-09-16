@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>OBD2 Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="index.css?v=1.3.0">
+    <link rel="stylesheet" href="index.css?v=1.4.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -883,6 +883,12 @@
                     const isActive = t.status === 'active';
                     const durationText = formatDuration(t.duration_seconds);
                     const dateText = formatDate(t.start_time);
+                    const distKm = parseFloat(t.distance_km || 0).toFixed(2);
+                    const avgSpd = Math.round(parseFloat(t.avg_speed || 0));
+                    const maxSpd = Math.round(parseFloat(t.max_speed || 0));
+                    const fuelL = parseFloat(t.fuel_liters || 0).toFixed(2);
+                    const l100 = parseFloat(t.l_per_100km || 0).toFixed(1);
+                    const costUah = parseFloat(t.trip_cost_uah || 0).toFixed(2);
 
                     return `
                         <div class="glass-panel trip-card">
@@ -896,7 +902,7 @@
                             <div class="trip-card-grid" style="grid-template-columns: repeat(3, 1fr);">
                                 <div class="trip-stat-item">
                                     <span class="trip-stat-label">Дистанція</span>
-                                    <span class="trip-stat-val">${t.distance_km} <span style="font-size:0.75rem;font-weight:400;">km</span></span>
+                                    <span class="trip-stat-val">${distKm} <span style="font-size:0.75rem;font-weight:400;">km</span></span>
                                 </div>
                                 <div class="trip-stat-item">
                                     <span class="trip-stat-label">Тривалість</span>
@@ -904,19 +910,19 @@
                                 </div>
                                 <div class="trip-stat-item">
                                     <span class="trip-stat-label">Сер. швидкість</span>
-                                    <span class="trip-stat-val">${t.avg_speed} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
+                                    <span class="trip-stat-val">${avgSpd} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
                                 </div>
                                 <div class="trip-stat-item">
                                     <span class="trip-stat-label">Макс. швидкість</span>
-                                    <span class="trip-stat-val">${t.max_speed} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
+                                    <span class="trip-stat-val">${maxSpd} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
                                 </div>
                                 <div class="trip-stat-item">
                                     <span class="trip-stat-label">Витрата</span>
-                                    <span class="trip-stat-val">${t.fuel_liters || 0} л <span style="font-size:0.72rem;color:var(--text-secondary);">(${t.l_per_100km || 0}/100)</span></span>
+                                    <span class="trip-stat-val">${fuelL} л <span style="font-size:0.72rem;color:var(--text-secondary);">(${l100}/100)</span></span>
                                 </div>
                                 <div class="trip-stat-item">
                                     <span class="trip-stat-label">Вартість</span>
-                                    <span class="trip-stat-val cost-tag">${t.trip_cost_uah || 0} ₴</span>
+                                    <span class="trip-stat-val cost-tag">${costUah} ₴</span>
                                 </div>
                             </div>
 
@@ -939,17 +945,23 @@
                 const trip = data.trip;
                 const records = data.records;
 
+                const distKm = parseFloat(trip.distance_km || 0).toFixed(2);
+                const fuelL = parseFloat(trip.fuel_liters || 0).toFixed(2);
+                const costUah = parseFloat(trip.trip_cost_uah || 0).toFixed(2);
+                const avgSpd = Math.round(parseFloat(trip.avg_speed || 0));
+                const maxSpd = Math.round(parseFloat(trip.max_speed || 0));
+
                 document.getElementById('modalTripTitle').innerText = `Поїздка #${trip.id}`;
                 document.getElementById('modalTripSub').innerText = `${formatDate(trip.start_time)} • Статус: ${trip.status === 'active' ? 'В процесі' : 'Завершена'}`;
                 
-                document.getElementById('modalTripDist').innerText = `${trip.distance_km || 0} km`;
+                document.getElementById('modalTripDist').innerText = `${distKm} km`;
                 document.getElementById('modalTripDuration').innerText = formatDuration(
                     Math.round((new Date(trip.end_time || Date.now()) - new Date(trip.start_time)) / 1000)
                 );
-                document.getElementById('modalTripAvg').innerText = `${Math.round(trip.avg_speed || 0)} km/h`;
-                document.getElementById('modalTripMax').innerText = `${Math.round(trip.max_speed || 0)} km/h`;
-                document.getElementById('modalTripFuel').innerText = `${trip.fuel_liters || 0} л`;
-                document.getElementById('modalTripCost').innerText = `${trip.trip_cost_uah || 0} ₴`;
+                document.getElementById('modalTripAvg').innerText = `${avgSpd} km/h`;
+                document.getElementById('modalTripMax').innerText = `${maxSpd} km/h`;
+                document.getElementById('modalTripFuel').innerText = `${fuelL} л`;
+                document.getElementById('modalTripCost').innerText = `${costUah} ₴`;
 
                 document.getElementById('tripModal').style.display = 'flex';
                 switchModalSubTab('map');

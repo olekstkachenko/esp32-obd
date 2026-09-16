@@ -683,4 +683,297 @@ router.get('/analytics/export/csv', async (req, res) => {
   }
 });
 
+// =========================================================================
+// 🛠️ SERVICE & MAINTENANCE API (Pajero 4 Car Service Book)
+// =========================================================================
+
+async function getCurrentOdometer() {
+  const baseSetting = await db.getAsync("SELECT value FROM settings WHERE key = 'odometer_base'");
+  const baseOdo = baseSetting ? (parseFloat(baseSetting.value) || 0) : 215000;
+  const tripsSum = await db.getAsync("SELECT SUM(distance_km) as total_dist FROM trips");
+  const totalTripsDist = (tripsSum && tripsSum.total_dist) ? parseFloat(tripsSum.total_dist) : 0;
+  return Math.round((baseOdo + totalTripsDist) * 10) / 10;
+}
+
+// 1. Get all maintenance items with current health status & vehicle odometer
+router.get('/service/items', async (req, res) => {
+  try {
+    const curOdo = await getCurrentOdometer();
+    const rows = await db.allAsync("SELECT * FROM service_items ORDER BY id ASC");
+    const now = new Date();
+
+    const items = (rows || []).map(item => {
+      const lastOdo = item.last_service_odometer || 0;
+      const kmSince = Math.max(0, Math.round((curOdo - lastOdo) * 10) / 10);
+      const kmRemaining = Math.round((item.interval_km - kmSince) * 10) / 10;
+      const percentUsed = Math.min(100, Math.max(0, Math.round((kmSince / item.interval_km) * 100)));
+
+      let monthsElapsed = 0;
+      let monthsRemaining = item.interval_months || 12;
+      if (item.last_service_date) {
+        const lastDate = new Date(item.last_service_date);
+        monthsElapsed = Math.max(0, (now.getFullYear() - lastDate.getFullYear()) * 12 + (now.getMonth() - lastDate.getMonth()));
+        monthsRemaining = Math.max(0, (item.interval_months || 12) - monthsElapsed);
+      }
+
+      let status = 'ok';
+      if (kmRemaining <= 0 || (item.interval_months && monthsRemaining <= 0)) {
+        status = 'overdue';
+      } else if (kmRemaining <= item.interval_km * 0.2 || (item.interval_months && monthsRemaining <= 1)) {
+        status = 'warning';
+      }
+
+      return {
+        ...item,
+        current_odometer: curOdo,
+        km_since_service: kmSince,
+        km_remaining: kmRemaining,
+        percent_used: percentUsed,
+        months_elapsed: monthsElapsed,
+        months_remaining: monthsRemaining,
+        status
+      };
+    });
+
+    res.json({
+      success: true,
+      current_odometer: curOdo,
+      items
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Add custom maintenance item
+router.post('/service/items', async (req, res) => {
+  const { title, category = 'general', interval_km = 10000, interval_months = 12, last_service_odometer = 0, icon = '🔧', notes = '' } = req.body || {};
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'Назва регламентної роботи обов\'язкова' });
+  }
+
+  try {
+    const curOdo = await getCurrentOdometer();
+    const lastOdo = last_service_odometer > 0 ? Number(last_service_odometer) : curOdo;
+    const result = await db.runAsync(
+      `INSERT INTO service_items (title, category, interval_km, interval_months, last_service_odometer, icon, notes) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [title.trim(), category, Math.max(100, Number(interval_km) || 10000), Math.max(1, Number(interval_months) || 12), lastOdo, icon, notes || '']
+    );
+    res.json({ success: true, id: result.lastID });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Update maintenance item
+router.put('/service/items/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { title, category, interval_km, interval_months, last_service_odometer, icon, notes } = req.body || {};
+
+  try {
+    const item = await db.getAsync('SELECT * FROM service_items WHERE id = ?', [id]);
+    if (!item) return res.status(404).json({ error: 'Пункт ТО не знайдено' });
+
+    const newTitle = title ? title.trim() : item.title;
+    const newCategory = category || item.category;
+    const newIntervalKm = interval_km ? Math.max(100, Number(interval_km)) : item.interval_km;
+    const newIntervalMonths = interval_months ? Math.max(1, Number(interval_months)) : item.interval_months;
+    const newLastOdo = (last_service_odometer !== undefined && last_service_odometer !== null) ? Number(last_service_odometer) : item.last_service_odometer;
+    const newIcon = icon || item.icon;
+    const newNotes = notes !== undefined ? notes : item.notes;
+
+    await db.runAsync(
+      `UPDATE service_items SET title = ?, category = ?, interval_km = ?, interval_months = ?, last_service_odometer = ?, icon = ?, notes = ? WHERE id = ?`,
+      [newTitle, newCategory, newIntervalKm, newIntervalMonths, newLastOdo, newIcon, newNotes, id]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Delete maintenance item
+router.delete('/service/items/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  try {
+    await db.runAsync('DELETE FROM service_items WHERE id = ?', [id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. Mark Service Complete / Replace
+router.post('/service/items/:id/replace', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { cost = 0, date = null, notes = '', odometer = null } = req.body || {};
+
+  try {
+    const item = await db.getAsync('SELECT * FROM service_items WHERE id = ?', [id]);
+    if (!item) return res.status(404).json({ error: 'Пункт ТО не знайдено' });
+
+    const curOdo = await getCurrentOdometer();
+    const serviceOdo = (odometer !== null && odometer !== undefined && Number(odometer) > 0) ? Number(odometer) : curOdo;
+    const serviceDate = date ? new Date(date).toISOString() : new Date().toISOString();
+    const serviceCost = Math.max(0, Number(cost) || 0);
+
+    await db.runAsync(
+      `UPDATE service_items SET last_service_odometer = ?, last_service_date = ? WHERE id = ?`,
+      [serviceOdo, serviceDate, id]
+    );
+
+    await db.runAsync(
+      `INSERT INTO service_logs (item_id, title, odometer, cost, date, notes) VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, item.title, serviceOdo, serviceCost, serviceDate, notes || '']
+    );
+
+    res.json({ success: true, message: 'Заміну успішно зафіксовано в сервісній книжці' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6. Service logs history
+router.get('/service/logs', async (req, res) => {
+  try {
+    const rows = await db.allAsync('SELECT * FROM service_logs ORDER BY date DESC, id DESC');
+    res.json({ success: true, logs: rows || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 7. Get/Set Base Odometer
+router.get('/service/odometer', async (req, res) => {
+  try {
+    const baseSetting = await db.getAsync("SELECT value FROM settings WHERE key = 'odometer_base'");
+    const baseOdo = baseSetting ? (parseFloat(baseSetting.value) || 0) : 215000;
+    const tripsSum = await db.getAsync("SELECT SUM(distance_km) as total_dist FROM trips");
+    const totalTripsDist = (tripsSum && tripsSum.total_dist) ? parseFloat(tripsSum.total_dist) : 0;
+    const curOdo = Math.round((baseOdo + totalTripsDist) * 10) / 10;
+
+    res.json({
+      success: true,
+      current_odometer: curOdo,
+      base_odometer: baseOdo,
+      trips_distance: Math.round(totalTripsDist * 10) / 10
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/service/odometer', async (req, res) => {
+  const { odometer_base } = req.body || {};
+  const newBase = Math.max(0, Number(odometer_base) || 0);
+
+  try {
+    await db.runAsync("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('odometer_base', ?, CURRENT_TIMESTAMP)", [String(newBase)]);
+    const curOdo = await getCurrentOdometer();
+    res.json({ success: true, current_odometer: curOdo, base_odometer: newBase });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =========================================================================
+// 📊 REPORTS & SUMMARY EXPORT API
+// =========================================================================
+
+router.get('/reports/summary', async (req, res) => {
+  try {
+    const { period = 'all' } = req.query;
+    let whereClause = '1=1';
+
+    if (period === 'today') {
+      whereClause = `DATE(start_time) >= DATE('now', 'localtime', 'start of day')`;
+    } else if (period === 'week') {
+      whereClause = `DATE(start_time) >= DATE('now', '-7 days')`;
+    } else if (period === 'month') {
+      whereClause = `DATE(start_time) >= DATE('now', '-30 days')`;
+    } else if (period === 'year') {
+      whereClause = `DATE(start_time) >= DATE('now', '-365 days')`;
+    }
+
+    const fuelPriceSetting = await db.getAsync("SELECT value FROM settings WHERE key = 'fuel_price'");
+    const fuelPrice = fuelPriceSetting ? (parseFloat(fuelPriceSetting.value) || 58.50) : 58.50;
+
+    const stats = await db.getAsync(`
+      SELECT 
+        COUNT(*) as total_trips,
+        COALESCE(SUM(distance_km), 0) as total_distance_km,
+        COALESCE(SUM(fuel_liters), 0) as total_fuel_liters,
+        COALESCE(AVG(NULLIF(avg_speed, 0)), 0) as avg_speed,
+        COALESCE(MAX(max_speed), 0) as max_speed,
+        COALESCE(MAX(distance_km), 0) as longest_trip_km
+      FROM trips
+      WHERE ${whereClause}
+    `);
+
+    const dist = Math.round((stats.total_distance_km || 0) * 10) / 10;
+    const fuel = Math.round((stats.total_fuel_liters || 0) * 10) / 10;
+    const cost = Math.round(fuel * fuelPrice);
+    const avgL100 = dist > 0 ? Math.round((fuel / dist) * 1000) / 10 : 0;
+    const costPerKm = dist > 0 ? Math.round((cost / dist) * 100) / 100 : 0;
+
+    res.json({
+      success: true,
+      period,
+      fuel_price: fuelPrice,
+      total_trips: stats.total_trips || 0,
+      total_distance_km: dist,
+      total_fuel_liters: fuel,
+      total_cost_uah: cost,
+      avg_consumption_l100km: avgL100,
+      avg_speed_kmh: Math.round(stats.avg_speed || 0),
+      max_speed_kmh: Math.round(stats.max_speed || 0),
+      longest_trip_km: Math.round((stats.longest_trip_km || 0) * 10) / 10,
+      cost_per_km_uah: costPerKm
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/reports/telegram-summary', async (req, res) => {
+  const { period = 'month' } = req.body || {};
+  try {
+    const fuelPriceSetting = await db.getAsync("SELECT value FROM settings WHERE key = 'fuel_price'");
+    const fuelPrice = fuelPriceSetting ? (parseFloat(fuelPriceSetting.value) || 58.50) : 58.50;
+
+    let whereClause = '1=1';
+    let periodName = 'за весь час';
+    if (period === 'month') {
+      whereClause = `DATE(start_time) >= DATE('now', '-30 days')`;
+      periodName = 'за останні 30 днів';
+    } else if (period === 'week') {
+      whereClause = `DATE(start_time) >= DATE('now', '-7 days')`;
+      periodName = 'за останні 7 днів';
+    }
+
+    const stats = await db.getAsync(`
+      SELECT COUNT(*) as count,
+             COALESCE(SUM(distance_km), 0) as dist,
+             COALESCE(SUM(fuel_liters), 0) as fuel,
+             COALESCE(AVG(NULLIF(avg_speed, 0)), 0) as speed
+      FROM trips
+      WHERE ${whereClause}
+    `);
+
+    const dist = Math.round((stats.dist || 0) * 10) / 10;
+    const fuel = Math.round((stats.fuel || 0) * 10) / 10;
+    const cost = Math.round(fuel * fuelPrice);
+    const l100 = dist > 0 ? ((fuel / dist) * 100).toFixed(1) : '0.0';
+    const costPerKm = dist > 0 ? (cost / dist).toFixed(2) : '0.00';
+
+    res.json({
+      success: true,
+      message: `Звіт сформовано: ${dist} км, ${fuel} л, ${cost} грн (${periodName})`
+    });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

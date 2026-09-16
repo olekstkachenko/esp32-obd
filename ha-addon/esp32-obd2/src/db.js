@@ -105,8 +105,57 @@ function initDatabase() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    // Default fuel price if not exists
+    // Default fuel price & base vehicle odometer if not exists
     db.run(`INSERT OR IGNORE INTO settings (key, value) VALUES ('fuel_price', '58.50')`);
+    db.run(`INSERT OR IGNORE INTO settings (key, value) VALUES ('odometer_base', '215000')`);
+
+    // 7. Service & Maintenance Items table
+    db.run(`CREATE TABLE IF NOT EXISTS service_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      category TEXT DEFAULT 'general',
+      interval_km INTEGER NOT NULL,
+      interval_months INTEGER DEFAULT 12,
+      last_service_odometer REAL DEFAULT 0,
+      last_service_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+      icon TEXT DEFAULT '🔧',
+      notes TEXT DEFAULT ''
+    )`);
+
+    // 8. Service & Maintenance Logs history table
+    db.run(`CREATE TABLE IF NOT EXISTS service_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id INTEGER,
+      title TEXT NOT NULL,
+      odometer REAL DEFAULT 0,
+      cost REAL DEFAULT 0,
+      date DATETIME DEFAULT CURRENT_TIMESTAMP,
+      notes TEXT DEFAULT ''
+    )`);
+
+    // Seed default Pajero 4 maintenance items if table is empty
+    db.get("SELECT COUNT(*) as count FROM service_items", (err, row) => {
+      if (!err && row && row.count === 0) {
+        const defaultItems = [
+          ['🛢️ Моторне мастило та фільтр', 'engine', 8000, 6, 210000, '5W-30 / 5W-40, об\'єм 4.8 л'],
+          ['💨 Повітряний фільтр двигуна', 'filters', 15000, 12, 210000, 'Перевірка щосезону'],
+          ['🌬️ Салонний фільтр (кондиціонера)', 'filters', 15000, 12, 210000, 'Вугільний або стандартний'],
+          ['⚙️ Масло в АКПП (ATF SP-III / PA)', 'transmission', 45000, 24, 180000, 'Повна або часткова заміна'],
+          ['🚜 Масло в роздатці Super Select', 'transmission', 40000, 24, 180000, '75W-90 GL-4, об\'єм ~2.3 л'],
+          ['🚙 Масло в мостах (перед/зад)', 'transmission', 40000, 24, 180000, '80W-90 GL-5, задній міст з LSD/блокуванням'],
+          ['🛑 Гальмівні колодки (перед/зад)', 'brakes', 30000, 24, 195000, 'Перевірка товщини фрикційного шару'],
+          ['💧 Гальмівна рідина (DOT 4)', 'fluids', 40000, 24, 180000, 'Заміна кожні 2 роки'],
+          ['⚡ Свічки запалювання (Іридій)', 'engine', 60000, 36, 170000, 'NGK Laser Iridium / Denso Iridium Tough'],
+          ['❄️ Охолоджуюча рідина (Антифриз)', 'fluids', 60000, 36, 170000, 'Super Long Life Coolant Premium']
+        ];
+        for (const it of defaultItems) {
+          db.run(
+            `INSERT INTO service_items (title, category, interval_km, interval_months, last_service_odometer, notes) VALUES (?, ?, ?, ?, ?, ?)`,
+            it
+          );
+        }
+      }
+    });
   });
 }
 

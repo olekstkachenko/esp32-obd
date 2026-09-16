@@ -31,11 +31,14 @@
             <button class="nav-tab" id="tabAnalyticsBtn" onclick="switchTab('analytics')">
                 <span>📈</span> Аналітика
             </button>
+            <button class="nav-tab" id="tabServiceBtn" onclick="switchTab('service')">
+                <span>🛠️</span> Сервіс
+            </button>
             <button class="nav-tab" id="tabGasBtn" onclick="switchTab('gas')">
                 <span>⛽</span> АЗС
             </button>
             <button class="nav-tab" id="tabDiagBtn" onclick="switchTab('diag')">
-                <span>🛠️</span> ESP32
+                <span>💻</span> ESP32
             </button>
         </nav>
 
@@ -244,6 +247,125 @@
             </div>
         </div>
 
+        <!-- ================= SERVICE & MAINTENANCE VIEW ================= -->
+        <div id="viewService" style="display: none; flex-direction: column; gap: 20px;">
+            <!-- Odometer & Calibration Banner -->
+            <div class="odometer-card glass-panel">
+                <div>
+                    <div style="font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                        <span>🚗</span> Поточний пробіг (Pajero 4)
+                    </div>
+                    <div class="odometer-digit-display">
+                        <span id="serviceCurrentOdo">--</span>
+                        <span style="font-size: 1.1rem; font-weight: 500; color: #94a3b8; letter-spacing: normal;">км</span>
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
+                        Базовий: <span id="serviceBaseOdo" style="color: #cbd5e1; font-weight: 600;">--</span> км &bull; Зафіксовано поїздками: <span id="serviceTripsDist" style="color: #38bdf8; font-weight: 600;">--</span> км
+                    </div>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-sm btn-primary" onclick="openOdometerModal()" style="display: flex; align-items: center; gap: 6px; padding: 10px 16px;">
+                        ✏️ Калібрувати одометр
+                    </button>
+                </div>
+            </div>
+
+            <!-- Cost of Ownership & Reports Export Widget -->
+            <div class="glass-panel" style="display: flex; flex-direction: column; gap: 16px;">
+                <div class="trips-header-bar" style="flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <div class="trip-header" style="font-size: 1.1rem; color: #fff;">📊 Вартість володіння & Звіти</div>
+                        <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">Аналітика витрат на пальне та експорт даних</div>
+                    </div>
+                    <div class="analytics-filter-group">
+                        <button class="period-btn" id="reportPeriodWeek" onclick="setReportsPeriod('week')">7 днів</button>
+                        <button class="period-btn active" id="reportPeriodMonth" onclick="setReportsPeriod('month')">30 днів</button>
+                        <button class="period-btn" id="reportPeriodAll" onclick="setReportsPeriod('all')">Весь час</button>
+                    </div>
+                </div>
+
+                <!-- KPI Mini Cards -->
+                <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px;">
+                    <div class="metric-card glass-panel highlight-green" style="padding: 14px 10px;">
+                        <div class="metric-title" style="font-size: 0.75rem;">Витрати на пальне</div>
+                        <div class="metric-value" style="font-size: 1.6rem;"><span id="reportTotalCost" class="cost-tag">--</span> <span class="unit">₴</span></div>
+                    </div>
+                    <div class="metric-card glass-panel" style="padding: 14px 10px;">
+                        <div class="metric-title" style="font-size: 0.75rem;">Пробіг за період</div>
+                        <div class="metric-value" style="font-size: 1.6rem;"><span id="reportTotalDist">--</span> <span class="unit">км</span></div>
+                    </div>
+                    <div class="metric-card glass-panel highlight-orange" style="padding: 14px 10px;">
+                        <div class="metric-title" style="font-size: 0.75rem;">Собівартість 1 км</div>
+                        <div class="metric-value" style="font-size: 1.6rem;"><span id="reportCostPerKm">--</span> <span class="unit">₴/км</span></div>
+                    </div>
+                    <div class="metric-card glass-panel" style="padding: 14px 10px;">
+                        <div class="metric-title" style="font-size: 0.75rem;">Сер. розхід</div>
+                        <div class="metric-value" style="font-size: 1.6rem;"><span id="reportAvgL100">--</span> <span class="unit">л/100</span></div>
+                    </div>
+                    <div class="metric-card glass-panel highlight-blue" style="padding: 14px 10px;">
+                        <div class="metric-title" style="font-size: 0.75rem;">Всього поїздок</div>
+                        <div class="metric-value" style="font-size: 1.6rem;"><span id="reportTripsCount">--</span></div>
+                    </div>
+                </div>
+
+                <!-- Export & Telegram Share Buttons -->
+                <div style="display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 14px;">
+                    <button class="btn-sm" style="background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.4); display: flex; align-items: center; gap: 6px; padding: 8px 14px; cursor: pointer;" onclick="downloadReportCsv()">
+                        📥 Експорт у CSV (Excel UTF-8)
+                    </button>
+                    <button class="btn-sm" style="background: rgba(56, 189, 248, 0.2); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.4); display: flex; align-items: center; gap: 6px; padding: 8px 14px; cursor: pointer;" onclick="sendReportToTelegram()">
+                        🤖 Надіслати звіт в Telegram
+                    </button>
+                </div>
+            </div>
+
+            <!-- Maintenance Items Section -->
+            <div class="trips-header-bar" style="flex-wrap: wrap; gap: 10px;">
+                <div>
+                    <div class="trip-header" style="font-size: 1.1rem; color: #fff;">🛠️ Регламентні роботи & Стан вузлів</div>
+                    <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">Контроль ресурсу мастил, рідин та розхідників</div>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-sm" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.35); display: flex; align-items: center; gap: 6px; cursor: pointer;" onclick="openAddServiceModal()">
+                        ➕ Додати регламент
+                    </button>
+                    <button class="btn-sm btn-primary" onclick="loadServiceView()">🔄 Оновити</button>
+                </div>
+            </div>
+
+            <!-- Service Items Dynamic Grid -->
+            <div id="serviceGrid" class="service-grid">
+                <!-- Service item cards inserted dynamically -->
+            </div>
+
+            <!-- Service Logs History Section -->
+            <div class="glass-panel" style="padding: 18px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px;">
+                    <div style="font-weight: 600; font-size: 1.05rem; color: #fff; display: flex; align-items: center; gap: 8px;">
+                        <span>📜</span> Історія проведених замін та ТО
+                    </div>
+                    <span id="serviceLogsCount" class="trip-badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8;">0 записів</span>
+                </div>
+
+                <div class="logs-table-wrapper">
+                    <table class="service-logs-table">
+                        <thead>
+                            <tr>
+                                <th>Дата</th>
+                                <th>Вузол / Робота</th>
+                                <th>Пробіг ТО</th>
+                                <th>Вартість</th>
+                                <th>Деталі / Бренд запчастини</th>
+                            </tr>
+                        </thead>
+                        <tbody id="serviceLogsTableBody">
+                            <!-- Rows inserted dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- ================= GAS STATIONS VIEW ================= -->
         <div id="viewGas" style="display: none; flex-direction: column; gap: 20px;">
             <div class="trips-header-bar">
@@ -403,6 +525,119 @@
                 </div>
             </div>
         </div>
+
+        <!-- ================= MODAL: CALIBRATE ODOMETER ================= -->
+        <div id="odometerModal" class="modal-overlay" style="display: none;">
+            <div class="modal-content glass-panel" style="max-width: 440px;">
+                <div class="modal-header">
+                    <h2 style="font-size: 1.15rem; font-weight: 600; color: #fff;">✏️ Калібрування одометра</h2>
+                    <button class="close-btn" onclick="closeOdometerModal()">✕</button>
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
+                    Введіть точний показник з панелі приладів авто. Пробіг за поїздками буде додаватися автоматично.
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Поточний пробіг на приладці (км):</label>
+                    <input type="number" step="1" id="inputOdometerBase" class="form-input" placeholder="215000">
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+                    <button class="btn-sm" onclick="closeOdometerModal()">Скасувати</button>
+                    <button class="btn-sm btn-primary" onclick="saveOdometerBase()">💾 Зберегти</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL: MARK SERVICE REPLACEMENT ================= -->
+        <div id="serviceReplaceModal" class="modal-overlay" style="display: none;">
+            <div class="modal-content glass-panel" style="max-width: 500px;">
+                <div class="modal-header">
+                    <div>
+                        <h2 id="replaceModalTitle" style="font-size: 1.15rem; font-weight: 600; color: #fff;">✅ Фіксація заміни</h2>
+                        <div id="replaceModalSubtitle" style="font-size: 0.8rem; color: var(--text-secondary);"></div>
+                    </div>
+                    <button class="close-btn" onclick="closeReplaceModal()">✕</button>
+                </div>
+                <input type="hidden" id="replaceItemId">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Пробіг при заміні (км):</label>
+                        <input type="number" step="1" id="replaceOdoInput" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Вартість (грн):</label>
+                        <input type="number" step="1" id="replaceCostInput" class="form-input" placeholder="0">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Дата виконання:</label>
+                    <input type="date" id="replaceDateInput" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Бренд / Нотатки (масло, каталожний номер):</label>
+                    <input type="text" id="replaceNotesInput" class="form-input" placeholder="напр. Idemitsu Zepro 5W-30 + Mann W610/3">
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+                    <button class="btn-sm" onclick="closeReplaceModal()">Скасувати</button>
+                    <button class="btn-sm" style="background: rgba(16, 185, 129, 0.25); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.5); font-weight: 600; cursor: pointer;" onclick="submitServiceReplace()">
+                        ✅ Зафіксувати заміну
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= MODAL: ADD CUSTOM SERVICE ITEM ================= -->
+        <div id="addServiceModal" class="modal-overlay" style="display: none;">
+            <div class="modal-content glass-panel" style="max-width: 520px;">
+                <div class="modal-header">
+                    <h2 style="font-size: 1.15rem; font-weight: 600; color: #fff;">➕ Новий регламентний пункт ТО</h2>
+                    <button class="close-btn" onclick="closeAddServiceModal()">✕</button>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Назва регламентної роботи:</label>
+                    <input type="text" id="addServiceTitle" class="form-input" placeholder="напр. Заміна ременя ГРМ + ролики">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Категорія:</label>
+                        <select id="addServiceCategory" class="form-input" style="background: rgba(15, 23, 42, 0.9);">
+                            <option value="engine">Двигун & Мастило</option>
+                            <option value="transmission">АКПП / Роздатка / Мости</option>
+                            <option value="brakes">Гальмівна система</option>
+                            <option value="filters">Фільтри</option>
+                            <option value="chassis">Ходова & Підвіска</option>
+                            <option value="electrical">Електрика & Свічки</option>
+                            <option value="cooling">Охолодження</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Іконка (емодзі):</label>
+                        <input type="text" id="addServiceIcon" class="form-input" value="🔧" style="text-align: center;">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Інтервал (км):</label>
+                        <input type="number" id="addServiceIntervalKm" class="form-input" value="10000" step="500">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Інтервал (місяців):</label>
+                        <input type="number" id="addServiceIntervalMonths" class="form-input" value="12" step="1">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Пробіг останньої заміни (км):</label>
+                    <input type="number" id="addServiceLastOdo" class="form-input" placeholder="Залишити порожнім для поточного пробігу">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Рекомендований бренд / Специфікація / Нотатки:</label>
+                    <input type="text" id="addServiceNotes" class="form-input" placeholder="напр. Mitsubishi Diamond ATF SP-III">
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+                    <button class="btn-sm" onclick="closeAddServiceModal()">Скасувати</button>
+                    <button class="btn-sm btn-primary" onclick="submitNewServiceItem()">➕ Додати регламент</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -492,12 +727,14 @@
             document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
             document.getElementById('tabTripsBtn').classList.toggle('active', tab === 'trips');
             document.getElementById('tabAnalyticsBtn').classList.toggle('active', tab === 'analytics');
+            document.getElementById('tabServiceBtn').classList.toggle('active', tab === 'service');
             document.getElementById('tabGasBtn').classList.toggle('active', tab === 'gas');
             document.getElementById('tabDiagBtn').classList.toggle('active', tab === 'diag');
             
             document.getElementById('viewLive').style.display = tab === 'live' ? 'flex' : 'none';
             document.getElementById('viewTrips').style.display = tab === 'trips' ? 'flex' : 'none';
             document.getElementById('viewAnalytics').style.display = tab === 'analytics' ? 'flex' : 'none';
+            document.getElementById('viewService').style.display = tab === 'service' ? 'flex' : 'none';
             document.getElementById('viewGas').style.display = tab === 'gas' ? 'flex' : 'none';
             document.getElementById('viewDiag').style.display = tab === 'diag' ? 'flex' : 'none';
 
@@ -509,6 +746,8 @@
                     loadTrips();
                 } else if (tab === 'analytics') {
                     loadAnalytics();
+                } else if (tab === 'service') {
+                    loadServiceView();
                 } else if (tab === 'gas') {
                     loadGasStations();
                 } else if (tab === 'diag') {
@@ -1227,6 +1466,350 @@
 
             if (tab === 'map' && modalMapInstance) {
                 setTimeout(() => modalMapInstance.invalidateSize(), 150);
+            }
+        }
+
+        // =========================================================================
+        // 🛠️ SERVICE & MAINTENANCE JAVASCRIPT LOGIC
+        // =========================================================================
+
+        let currentReportsPeriod = 'month';
+        let cachedOdometer = 215000;
+
+        async function loadServiceView() {
+            await Promise.all([
+                loadOdometer(),
+                loadReportsSummary(currentReportsPeriod),
+                loadServiceItems(),
+                loadServiceLogs()
+            ]);
+        }
+
+        async function loadOdometer() {
+            try {
+                const res = await fetch(apiUrl('api/service/odometer'));
+                const data = await res.json();
+                if (data.success) {
+                    cachedOdometer = data.current_odometer;
+                    document.getElementById('serviceCurrentOdo').textContent = Number(data.current_odometer).toLocaleString('uk-UA');
+                    document.getElementById('serviceBaseOdo').textContent = Number(data.base_odometer).toLocaleString('uk-UA');
+                    document.getElementById('serviceTripsDist').textContent = Number(data.trips_distance).toLocaleString('uk-UA', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+                    document.getElementById('inputOdometerBase').value = Math.round(data.base_odometer);
+                }
+            } catch (err) {
+                console.error('Failed to load odometer:', err);
+            }
+        }
+
+        async function loadReportsSummary(period = 'month') {
+            try {
+                const res = await fetch(apiUrl(`api/reports/summary?period=${period}`));
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('reportTotalCost').textContent = Math.round(data.total_cost_uah).toLocaleString('uk-UA');
+                    document.getElementById('reportTotalDist').textContent = Number(data.total_distance_km).toLocaleString('uk-UA', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+                    document.getElementById('reportCostPerKm').textContent = Number(data.cost_per_km_uah).toFixed(2);
+                    document.getElementById('reportAvgL100').textContent = Number(data.avg_consumption_l100km).toFixed(1);
+                    document.getElementById('reportTripsCount').textContent = data.total_trips;
+                }
+            } catch (err) {
+                console.error('Failed to load reports summary:', err);
+            }
+        }
+
+        function setReportsPeriod(period) {
+            currentReportsPeriod = period;
+            document.getElementById('reportPeriodWeek').classList.toggle('active', period === 'week');
+            document.getElementById('reportPeriodMonth').classList.toggle('active', period === 'month');
+            document.getElementById('reportPeriodAll').classList.toggle('active', period === 'all');
+            loadReportsSummary(period);
+        }
+
+        function downloadReportCsv() {
+            window.open(apiUrl(`api/analytics/export/csv?period=${currentReportsPeriod}`), '_blank');
+        }
+
+        async function sendReportToTelegram() {
+            try {
+                const res = await fetch(apiUrl('api/reports/telegram-summary'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ period: currentReportsPeriod })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('🤖 ' + data.message);
+                } else {
+                    alert('Помилка: ' + (data.error || 'Не вдалося надіслати'));
+                }
+            } catch (err) {
+                alert('Помилка надсилання: ' + err.message);
+            }
+        }
+
+        async function loadServiceItems() {
+            const container = document.getElementById('serviceGrid');
+            try {
+                const res = await fetch(apiUrl('api/service/items'));
+                const data = await res.json();
+                if (!data.success || !data.items || data.items.length === 0) {
+                    container.innerHTML = `<div class="empty-state" style="grid-column: 1/-1;"><div class="icon">🔧</div><div>Немає регламентних робіт. Додайте перший запис!</div></div>`;
+                    return;
+                }
+
+                container.innerHTML = data.items.map(item => {
+                    const statusClass = item.status === 'overdue' ? 'card-overdue' : (item.status === 'warning' ? 'card-warning' : '');
+                    const fillClass = item.status === 'overdue' ? 'fill-danger' : (item.status === 'warning' ? 'fill-warning' : 'fill-ok');
+                    
+                    let statusPill = '';
+                    if (item.status === 'overdue') {
+                        statusPill = `<span class="status-pill overdue">🔴 Прострочено (${Math.abs(item.km_remaining)} км)</span>`;
+                    } else if (item.status === 'warning') {
+                        statusPill = `<span class="status-pill warning">🟡 Скоро заміна (${item.km_remaining} км)</span>`;
+                    } else {
+                        statusPill = `<span class="status-pill ok">🟢 В нормі (${item.km_remaining} км)</span>`;
+                    }
+
+                    // Resource percent remaining: 100% -> newly replaced, 0% -> needs replacement
+                    const percentRemaining = Math.max(0, Math.min(100, Math.round(100 - item.percent_used)));
+                    const lastOdoFormatted = Number(item.last_service_odometer || 0).toLocaleString('uk-UA');
+                    const lastDateFormatted = item.last_service_date ? new Date(item.last_service_date).toLocaleDateString('uk-UA') : 'Не вказано';
+
+                    return `
+                        <div class="service-card ${statusClass}">
+                            <div class="service-card-header">
+                                <div class="service-title-wrap">
+                                    <span class="service-icon">${item.icon || '🔧'}</span>
+                                    <div>
+                                        <div class="service-title">${item.title}</div>
+                                        <div class="service-interval-tag">Кожні ${Number(item.interval_km).toLocaleString('uk-UA')} км / ${item.interval_months || 12} міс</div>
+                                    </div>
+                                </div>
+                                <div>${statusPill}</div>
+                            </div>
+
+                            <div class="service-progress-wrap">
+                                <div style="display: flex; justify-content: space-between; font-size: 0.78rem;">
+                                    <span style="color: var(--text-secondary);">Залишок ресурсу:</span>
+                                    <span style="font-weight: 700; color: #fff;">${percentRemaining}%</span>
+                                </div>
+                                <div class="service-progress-bar">
+                                    <div class="service-progress-fill ${fillClass}" style="width: ${percentRemaining}%;"></div>
+                                </div>
+                            </div>
+
+                            <div class="service-meta-grid">
+                                <div>
+                                    <div class="service-meta-label">Остання заміна:</div>
+                                    <div class="service-meta-val">${lastOdoFormatted} км</div>
+                                </div>
+                                <div>
+                                    <div class="service-meta-label">Дата заміни:</div>
+                                    <div class="service-meta-val">${lastDateFormatted}</div>
+                                </div>
+                                ${item.notes ? `<div style="grid-column: 1/-1; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 6px; font-size: 0.75rem; color: #94a3b8;"><b>Специфікація:</b> ${item.notes}</div>` : ''}
+                            </div>
+
+                            <div class="service-card-actions">
+                                <button class="btn-replace-action" onclick="openReplaceModal(${item.id}, '${item.title.replace(/'/g, "\\'")}', ${item.current_odometer})">
+                                    ✅ Позначити заміну
+                                </button>
+                                <button class="btn-del-item" title="Видалити регламент" onclick="deleteServiceItem(${item.id}, '${item.title.replace(/'/g, "\\'")}')">
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error('Failed to load service items:', err);
+            }
+        }
+
+        async function loadServiceLogs() {
+            const tbody = document.getElementById('serviceLogsTableBody');
+            const countBadge = document.getElementById('serviceLogsCount');
+            try {
+                const res = await fetch(apiUrl('api/service/logs'));
+                const data = await res.json();
+                if (!data.success || !data.logs || data.logs.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-secondary); padding: 24px;">Історія замін порожня. Позначте першу заміну для збереження запису!</td></tr>`;
+                    countBadge.textContent = '0 записів';
+                    return;
+                }
+
+                countBadge.textContent = `${data.logs.length} ${data.logs.length === 1 ? 'запис' : 'записів'}`;
+                tbody.innerHTML = data.logs.map(log => {
+                    const dateStr = log.date ? new Date(log.date).toLocaleDateString('uk-UA') : '--';
+                    const costStr = log.cost > 0 ? `<b style="color: #34d399;">${Number(log.cost).toLocaleString('uk-UA')} ₴</b>` : '<span style="color: var(--text-secondary);">-</span>';
+                    const odoStr = log.odometer > 0 ? `${Number(log.odometer).toLocaleString('uk-UA')} км` : '--';
+
+                    return `
+                        <tr>
+                            <td style="white-space: nowrap; color: #94a3b8;">${dateStr}</td>
+                            <td style="font-weight: 600;">${log.title}</td>
+                            <td style="white-space: nowrap;">${odoStr}</td>
+                            <td style="white-space: nowrap;">${costStr}</td>
+                            <td style="color: #cbd5e1;">${log.notes || '<span style="color: var(--text-secondary);">-</span>'}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error('Failed to load service logs:', err);
+            }
+        }
+
+        // Modals Logic
+        function openOdometerModal() {
+            document.getElementById('inputOdometerBase').value = Math.round(cachedOdometer);
+            document.getElementById('odometerModal').style.display = 'flex';
+        }
+
+        function closeOdometerModal() {
+            document.getElementById('odometerModal').style.display = 'none';
+        }
+
+        async function saveOdometerBase() {
+            const val = parseFloat(document.getElementById('inputOdometerBase').value);
+            if (isNaN(val) || val < 0) {
+                alert('Будь ласка, введіть коректне числове значення пробігу.');
+                return;
+            }
+            try {
+                const res = await fetch(apiUrl('api/service/odometer'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ odometer_base: val })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closeOdometerModal();
+                    loadServiceView();
+                }
+            } catch (err) {
+                alert('Помилка збереження: ' + err.message);
+            }
+        }
+
+        function openReplaceModal(itemId, itemTitle, currentOdo) {
+            document.getElementById('replaceItemId').value = itemId;
+            document.getElementById('replaceModalTitle').textContent = `✅ Фіксація: ${itemTitle}`;
+            document.getElementById('replaceModalSubtitle').textContent = `Реєстрація виконання заміни в сервісній книжці`;
+            document.getElementById('replaceOdoInput').value = Math.round(currentOdo || cachedOdometer);
+            document.getElementById('replaceCostInput').value = '';
+            document.getElementById('replaceDateInput').value = new Date().toISOString().split('T')[0];
+            document.getElementById('replaceNotesInput').value = '';
+            document.getElementById('serviceReplaceModal').style.display = 'flex';
+        }
+
+        function closeReplaceModal() {
+            document.getElementById('serviceReplaceModal').style.display = 'none';
+        }
+
+        async function submitServiceReplace() {
+            const itemId = document.getElementById('replaceItemId').value;
+            const odo = parseFloat(document.getElementById('replaceOdoInput').value);
+            const cost = parseFloat(document.getElementById('replaceCostInput').value) || 0;
+            const date = document.getElementById('replaceDateInput').value;
+            const notes = document.getElementById('replaceNotesInput').value;
+
+            if (isNaN(odo) || odo <= 0) {
+                alert('Введіть коректний пробіг заміни.');
+                return;
+            }
+
+            try {
+                const res = await fetch(apiUrl(`api/service/items/${itemId}/replace`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        odometer: odo,
+                        cost,
+                        date,
+                        notes
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closeReplaceModal();
+                    loadServiceView();
+                } else {
+                    alert('Помилка: ' + (data.error || 'Не вдалося зберегти'));
+                }
+            } catch (err) {
+                alert('Помилка зв\'язку: ' + err.message);
+            }
+        }
+
+        function openAddServiceModal() {
+            document.getElementById('addServiceTitle').value = '';
+            document.getElementById('addServiceCategory').value = 'engine';
+            document.getElementById('addServiceIcon').value = '🔧';
+            document.getElementById('addServiceIntervalKm').value = 10000;
+            document.getElementById('addServiceIntervalMonths').value = 12;
+            document.getElementById('addServiceLastOdo').value = Math.round(cachedOdometer);
+            document.getElementById('addServiceNotes').value = '';
+            document.getElementById('addServiceModal').style.display = 'flex';
+        }
+
+        function closeAddServiceModal() {
+            document.getElementById('addServiceModal').style.display = 'none';
+        }
+
+        async function submitNewServiceItem() {
+            const title = document.getElementById('addServiceTitle').value.trim();
+            const category = document.getElementById('addServiceCategory').value;
+            const icon = document.getElementById('addServiceIcon').value.trim() || '🔧';
+            const interval_km = parseFloat(document.getElementById('addServiceIntervalKm').value);
+            const interval_months = parseFloat(document.getElementById('addServiceIntervalMonths').value);
+            const last_service_odometer = parseFloat(document.getElementById('addServiceLastOdo').value) || cachedOdometer;
+            const notes = document.getElementById('addServiceNotes').value.trim();
+
+            if (!title) {
+                alert('Введіть назву регламентної роботи.');
+                return;
+            }
+            if (isNaN(interval_km) || interval_km <= 0) {
+                alert('Введіть коректний інтервал пробігу.');
+                return;
+            }
+
+            try {
+                const res = await fetch(apiUrl('api/service/items'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title,
+                        category,
+                        icon,
+                        interval_km,
+                        interval_months,
+                        last_service_odometer,
+                        notes
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closeAddServiceModal();
+                    loadServiceView();
+                } else {
+                    alert('Помилка: ' + (data.error || 'Не вдалося створити'));
+                }
+            } catch (err) {
+                alert('Помилка: ' + err.message);
+            }
+        }
+
+        async function deleteServiceItem(id, title) {
+            if (!confirm(`Ви дійсно бажаєте видалити регламентний пункт "${title}"?`)) return;
+            try {
+                const res = await fetch(apiUrl(`api/service/items/${id}`), { method: 'DELETE' });
+                const data = await res.json();
+                if (data.success) {
+                    loadServiceItems();
+                }
+            } catch (err) {
+                alert('Помилка видалення: ' + err.message);
             }
         }
 

@@ -718,55 +718,110 @@ void loop() {
   // 1. Maintain Bluetooth OBD2 connection
   ensureELMConnected();
 
+  static float cachedVolt = 13.8f;
+  static float cachedTemp = 85.0f;
+  static float cachedMaf = 0.0f;
+  static unsigned long lastAuxUpdate = 0;
+  static bool mafSupported = true;
+  static int mafFailCount = 0;
+  static int consecutiveErrors = 0;
+  static bool engineRunning = false;
+
   // 2. Query OBD2 telemetry if connected
   if (elmInitialized && SerialBT.connected()) {
     if (millis() - lastUpdate > updateInterval) {
-      float dt = (lastUpdate > 0) ? ((millis() - lastUpdate) / 1000.0) : 1.0;
+      float dt = (lastUpdate > 0) ? ((millis() - lastUpdate) / 1000.0f) : 1.0f;
       lastUpdate = millis();
 
-      float volt = myELM327.batteryVoltage();
+      // Flush any leftover stale bytes before sending new OBD PID queries
+      while (SerialBT.available()) {
+        SerialBT.read();
+      }
+
+      // Fast Telemetry: RPM and Speed (Queried every 500ms)
       float rpm = myELM327.rpm();
+      int8_t rpmState = myELM327.nb_rx_state;
+
       float speed = myELM327.kph();
-      float temp = myELM327.engineCoolantTemp();
-      float maf = myELM327.mafRate();
+      int8_t speedState = myELM327.nb_rx_state;
 
-      static int consecutiveErrors = 0;
-      static bool engineRunning = false;
+      // Slow / Cached Telemetry: Voltage, Coolant Temp, MAF (Queried every 3s)
+      if (millis() - lastAuxUpdate > 3000 || lastAuxUpdate == 0) {
+        lastAuxUpdate = millis();
 
-      // Handle Engine Off / Sleep on Blue ELM327
-      if (myELM327.nb_rx_state != ELM_SUCCESS && (isnan(rpm) || rpm <= 0) && (isnan(volt) || volt <= 0)) {
-        consecutiveErrors++;
-        updateInterval = 3000; // Throttle polling to 3s when engine is OFF to save car battery
-        
-        if (consecutiveErrors == 3) {
-          sendLog("💤 Запалювання вимкнено (очікування старту двигуна Pajero 4)...", "info", "engine_off");
+        float voltRead = myELM327.batteryVoltage();
+        if (!isnan(voltRead) && voltRead > 5.0f && voltRead < 25.0f) {
+          cachedVolt = voltRead;
         }
-        if (consecutiveErrors >= 20) {
+
+        float tempRead = myELM327.engineCoolantTemp();
+        if (myELM327.nb_rx_state == ELM_SUCCESS && !isnan(tempRead) && tempRead > -40.0f && tempRead < 150.0f) {
+          cachedTemp = tempRead;
+        }
+
+        if (mafSupported) {
+          float mafRead = myELM327.mafRate();
+          if (myELM327.nb_rx_state == ELM_SUCCESS && !isnan(mafRead) && mafRead >= 0) {
+            cachedMaf = mafRead;
+            mafFailCount = 0;
+          } else {
+            mafFailCount++;
+            if (mafFailCount >= 3) {
+              mafSupported = false;
+              DEBUG_PORT.println("ℹ️ MAF PID 0110 не підтримується ЕБУ (перемикання на розрахунок за RPM/Speed)");
+            }
+          }
+        }
+      }
+
+      // Evaluation of engine & ignition state based on RPM and valid ELM responses
+      bool gotRpm = (rpmState == ELM_SUCCESS && !isnan(rpm) && rpm > 350.0f);
+      bool gotSpeed = (speedState == ELM_SUCCESS && !isnan(speed) && speed > 0.0f);
+      bool gotAnySuccess = (rpmState == ELM_SUCCESS || speedState == ELM_SUCCESS);
+
+      if (gotRpm || gotSpeed || (!isnan(rpm) && rpm > 350.0f)) {
+        // Engine is definitely running or vehicle is moving
+        engineRunning = true;
+        consecutiveErrors = 0;
+        updateInterval = 500; // Fast polling
+      } else if (!gotAnySuccess && (isnan(rpm) || rpm <= 0)) {
+        // Query failure or car ignition OFF
+        consecutiveErrors++;
+        updateInterval = 3000; // Throttle polling to 3s when ignition is OFF
+
+        if (consecutiveErrors == 6) {
+          sendLog("💤 Запалювання вимкнено (очікування старту двигуна Pajero 4)...", "info", "engine_off");
+          engineRunning = false;
+        }
+        if (consecutiveErrors >= 25) {
           sendLog("🔄 Переініціалізація протоколу ELM327...", "warn", "connecting");
           elmInitialized = false;
           consecutiveErrors = 0;
+          mafSupported = true;
+          mafFailCount = 0;
         }
       } else {
+        // RPM was 0 but query succeeded (e.g., ignition is ON, engine not running yet)
         consecutiveErrors = 0;
-        updateInterval = 500; // Ultra-Fast 0.5-second active telemetry rate
-      }
-
-      if (isnan(volt) || volt < 0 || volt > 30.0) volt = 0;
-      if (isnan(rpm) || rpm < 0) rpm = 0;
-      if (isnan(speed) || speed < 0) speed = 0;
-      if (isnan(temp) || temp < -40 || temp > 200) temp = 0;
-      if (isnan(maf) || maf < 0) maf = 0;
-
-      // Fuel consumption for Gasoline (14.7:1 AFR, density ~720 g/L)
-      float fuel_rate = (maf > 0) ? (maf * 3600.0 / 14.7 / 720.0) : 0;
-
-      if (rpm > 400 || volt > 13.0) {
-        engineRunning = true;
-      } else if (rpm == 0 && volt > 0 && volt < 12.8) {
+        updateInterval = 1000;
         engineRunning = false;
       }
 
-      if (volt > 0 || rpm > 0 || speed > 0 || temp > 0 || myELM327.nb_rx_state == ELM_SUCCESS) {
+      float cleanRpm = (isnan(rpm) || rpm < 0) ? 0 : rpm;
+      float cleanSpeed = (isnan(speed) || speed < 0) ? 0 : speed;
+      float cleanTemp = cachedTemp;
+      float cleanVolt = cachedVolt;
+
+      // Fuel consumption for Gasoline (14.7:1 AFR, density ~720 g/L or estimated from RPM)
+      float fuel_rate = 0.0f;
+      if (cachedMaf > 0) {
+        fuel_rate = cachedMaf * 3600.0f / 14.7f / 720.0f;
+      } else if (cleanRpm > 350.0f) {
+        // Idle (650-750 RPM) ~ 1.4 L/h, scales with RPM
+        fuel_rate = (cleanRpm / 700.0f) * 1.4f;
+      }
+
+      if (cleanRpm > 0 || cleanSpeed > 0 || gotAnySuccess) {
 #ifdef ENABLE_GPS
         bool hasFix = gps.location.isValid() && (gps.location.age() < 5000);
         float curLat = hasFix ? (float)gps.location.lat() : 0.0f;
@@ -782,13 +837,13 @@ void loop() {
 #endif
 
         DEBUG_PORT.printf("✅ DATA: RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | GPS: %s | Buffer: %d\n", 
-                          rpm, speed, temp, volt, fuel_rate, (hasFix ? "FIX" : "NO_FIX"), (int)telemetryBuffer.size());
+                          cleanRpm, cleanSpeed, cleanTemp, cleanVolt, fuel_rate, (hasFix ? "FIX" : "NO_FIX"), (int)telemetryBuffer.size());
         
         if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
         if (telemetryBuffer.size() >= MAX_BUFFER_SIZE) {
           telemetryBuffer.erase(telemetryBuffer.begin());
         }
-        telemetryBuffer.push_back({rpm, speed, temp, volt, fuel_rate, dt, curLat, curLon, curAlt, curSat, hasFix});
+        telemetryBuffer.push_back({cleanRpm, cleanSpeed, cleanTemp, cleanVolt, fuel_rate, dt, curLat, curLon, curAlt, curSat, hasFix});
         if (dataMutex) xSemaphoreGive(dataMutex);
       }
     }

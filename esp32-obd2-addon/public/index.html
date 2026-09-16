@@ -940,8 +940,16 @@
         async function clearDeviceLogs() {
             if (!confirm('Очистити всі збережені логи ESP32?')) return;
             try {
+                const emptyMsg = '<div style="color: var(--text-secondary);">⏳ Немає записів у журналі (консоль очищено)</div>';
+                const logsEl = document.getElementById('espLogsConsole');
+                const fullLogsEl = document.getElementById('fullLogsConsole');
+                if (logsEl) logsEl.innerHTML = emptyMsg;
+                if (fullLogsEl) fullLogsEl.innerHTML = emptyMsg;
+                const logCountEl = document.getElementById('diagLogCount');
+                if (logCountEl) logCountEl.innerText = '0 логів';
+
                 await fetch(apiUrl('api/device/logs'), { method: 'DELETE' });
-                fetchDeviceStatus();
+                await fetchDeviceStatus();
             } catch (err) {
                 alert('Помилка очищення логів');
             }
@@ -1045,6 +1053,10 @@
                         fullLogsEl.innerHTML = formattedHtml;
                         fullLogsEl.scrollTop = fullLogsEl.scrollHeight;
                     }
+                } else {
+                    const emptyMsg = '<div style="color: var(--text-secondary);">⏳ Немає записів у журналі (консоль очищено)</div>';
+                    if (logsEl) logsEl.innerHTML = emptyMsg;
+                    if (fullLogsEl) fullLogsEl.innerHTML = emptyMsg;
                 }
             } catch(err) {}
         }

@@ -83,12 +83,14 @@ function initDatabase() {
     db.run(`ALTER TABLE obd_records ADD COLUMN alt REAL`, () => {});
     db.run(`ALTER TABLE obd_records ADD COLUMN sat INTEGER`, () => {});
 
-    // 4. Performance Indexes
+    // 4. Performance Indexes (Optimized for 50k+ records on long drives)
     db.run(`CREATE INDEX IF NOT EXISTS idx_obd_records_trip_id ON obd_records (trip_id)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_obd_records_trip_speed ON obd_records (trip_id, speed)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_obd_records_timestamp ON obd_records (id DESC)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_obd_records_gps ON obd_records (trip_id, lat, lon)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_trips_status ON trips (status)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_trips_id_desc ON trips (id DESC)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_trips_start_time ON trips (start_time)`);
 
     // 5. Gas station fuel prices table
     db.run(`CREATE TABLE IF NOT EXISTS fuel_prices (

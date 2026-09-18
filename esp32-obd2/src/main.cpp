@@ -136,7 +136,7 @@ struct LogEntry {
 
 static SemaphoreHandle_t dataMutex = NULL;
 std::vector<OBDRecord> telemetryBuffer;
-const size_t MAX_BUFFER_SIZE = 300; // Store up to ~5 minutes of offline telemetry (7.2 KB RAM)
+const size_t MAX_BUFFER_SIZE = 600; // Store up to ~10-15 minutes of offline telemetry on highway (~14.4 KB RAM)
 std::vector<LogEntry> logQueue;
 
 void sendLog(const String& message, const String& level = "info", const String& bt_status = "") {
@@ -453,7 +453,7 @@ void networkTask(void *pvParameters) {
         wasWifiConnected = false;
         DEBUG_PORT.println("⚠️ Wi-Fi з'єднання втрачено (перехід в офлайн-буфер)!");
       }
-      if (millis() - lastWifiRetry > 30000) {
+      if (millis() - lastWifiRetry > 10000) {
         lastWifiRetry = millis();
         DEBUG_PORT.println("🔄 Перевірка Wi-Fi з'єднання (WiFi.reconnect)...");
         if (WiFi.status() != WL_CONNECTED) {
@@ -835,9 +835,15 @@ void loop() {
         }
       }
 
-      // Fuel consumption for Pajero 4 Gasoline (Idle ~1.4 L/h, scales linearly with RPM)
+      // Accurate Fuel Consumption Model for Pajero 4 V6 Gasoline (Idle ~1.4 L/h, Dynamic Highway/City Load)
       if (liveRpm > 350.0f) {
-        liveFuel = (liveRpm / 700.0f) * 1.4f;
+        if (liveSpeed <= 3.0f) {
+          liveFuel = (liveRpm / 700.0f) * 1.4f; // ~1.4 L/h idle at ~700 RPM
+        } else {
+          float rpmFactor = (liveRpm / 2000.0f);
+          float speedRatio = (liveSpeed / 100.0f);
+          liveFuel = (rpmFactor * 6.5f) + (speedRatio * speedRatio * 4.5f) + 1.2f;
+        }
       } else {
         liveFuel = 0.0f;
       }

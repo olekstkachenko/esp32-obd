@@ -722,6 +722,19 @@
             if (liveTimer2) { clearInterval(liveTimer2); liveTimer2 = null; }
         }
 
+        // Battery-Saving & Mobile Optimization: Pause polling when phone screen is locked or tab is hidden
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopLiveTimers();
+            } else {
+                if (currentTab === 'live') {
+                    startLiveTimers();
+                } else if (currentTab === 'diag') {
+                    fetchDeviceStatus();
+                }
+            }
+        });
+
         function switchTab(tab) {
             currentTab = tab;
             document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');

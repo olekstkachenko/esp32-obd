@@ -728,14 +728,14 @@ void loop() {
   static ObdQueryState obdState = STATE_RPM;
   static float liveRpm = 0.0f;
   static float liveSpeed = 0.0f;
-  static float liveTemp = 85.0f;
-  static float liveVolt = 13.8f;
+  static float liveTemp = 0.0f;
+  static float liveVolt = 0.0f;
   static float liveFuel = 0.0f;
 
   static unsigned long lastPushTime = 0;
   static unsigned long lastSlowQuery = 0;
-  static int consecutiveErrors = 0;
   static bool engineRunning = false;
+  static bool ignitionLogged = false;
 
   // 2. Query OBD2 telemetry via non-blocking state machine
   if (elmInitialized && SerialBT.connected()) {
@@ -748,6 +748,7 @@ void loop() {
           }
           obdState = STATE_SPEED;
         } else if (myELM327.nb_rx_state != ELM_GETTING_MSG) {
+          liveRpm = 0.0f;
           obdState = STATE_SPEED;
         }
         break;
@@ -763,13 +764,15 @@ void loop() {
               liveSpeed = (float)s;
             }
           }
-          if (millis() - lastSlowQuery > 4000) {
+          // Prioritize coolant/voltage when engine is stopped, or query every 2.5s while driving
+          if (!engineRunning || (millis() - lastSlowQuery > 2500)) {
             obdState = STATE_COOLANT;
           } else {
             obdState = STATE_RPM;
           }
         } else if (myELM327.nb_rx_state != ELM_GETTING_MSG) {
-          if (millis() - lastSlowQuery > 4000) {
+          liveSpeed = 0.0f;
+          if (!engineRunning || (millis() - lastSlowQuery > 2500)) {
             obdState = STATE_COOLANT;
           } else {
             obdState = STATE_RPM;
@@ -807,26 +810,28 @@ void loop() {
       }
     }
 
-    // 3. Periodic Telemetry Commit & Buffer Push (Every 500ms)
-    if (millis() - lastPushTime >= 500) {
-      float dt = (lastPushTime > 0) ? ((millis() - lastPushTime) / 1000.0f) : 0.5f;
+    // 3. Periodic Telemetry Commit & Buffer Push
+    // Interval: 500ms when driving, 1000ms when engine stopped / ignition standby
+    unsigned long pushInterval = engineRunning ? 500 : 1000;
+
+    if (millis() - lastPushTime >= pushInterval) {
+      float dt = (lastPushTime > 0) ? ((millis() - lastPushTime) / 1000.0f) : (pushInterval / 1000.0f);
       lastPushTime = millis();
 
-      // Check engine and ignition status
+      // Check engine state transitions
       if (liveRpm > 350.0f || liveSpeed > 2.0f) {
-        engineRunning = true;
-        consecutiveErrors = 0;
-      } else if (liveRpm == 0.0f && liveSpeed == 0.0f) {
-        consecutiveErrors++;
-        if (consecutiveErrors == 10) { // ~5 seconds of zero activity
-          sendLog("💤 Запалювання вимкнено (очікування старту двигуна Pajero 4)...", "info", "engine_off");
-          engineRunning = false;
+        if (!engineRunning) {
+          engineRunning = true;
+          ignitionLogged = false;
+          sendLog("🚗 Двигун запущено (" + String((int)liveRpm) + " RPM)! Початок поїздки Pajero 4.", "success", "engine_on");
         }
-        if (consecutiveErrors >= 60) { // ~30 seconds of persistent disconnect/sleep
-          sendLog("🔄 Переініціалізація протоколу ELM327...", "warn", "connecting");
-          elmInitialized = false;
-          consecutiveErrors = 0;
-          obdState = STATE_RPM;
+      } else {
+        if (engineRunning) {
+          engineRunning = false;
+          sendLog("🅿️ Двигун зупинено (Запалювання увімкнено | АКБ: " + String(liveVolt, 1) + "V | Темп: " + String(liveTemp, 0) + "°C)", "info", "engine_off");
+        } else if (!ignitionLogged) {
+          ignitionLogged = true;
+          sendLog("🔋 Запалювання / Режим очікування (АКБ: " + String(liveVolt, 1) + "V | Темп: " + String(liveTemp, 0) + "°C)", "info", "standby");
         }
       }
 
@@ -837,32 +842,30 @@ void loop() {
         liveFuel = 0.0f;
       }
 
-      // Record telemetry if car is on/moving or periodically
-      if (engineRunning || liveRpm > 0 || liveSpeed > 0 || consecutiveErrors < 10) {
+      // ALWAYS record & push telemetry while ELM327 is connected!
 #ifdef ENABLE_GPS
-        bool hasFix = gps.location.isValid() && (gps.location.age() < 5000);
-        float curLat = hasFix ? (float)gps.location.lat() : 0.0f;
-        float curLon = hasFix ? (float)gps.location.lng() : 0.0f;
-        float curAlt = (hasFix && gps.altitude.isValid()) ? (float)gps.altitude.meters() : 0.0f;
-        int curSat = gps.satellites.isValid() ? (int)gps.satellites.value() : 0;
+      bool hasFix = gps.location.isValid() && (gps.location.age() < 5000);
+      float curLat = hasFix ? (float)gps.location.lat() : 0.0f;
+      float curLon = hasFix ? (float)gps.location.lng() : 0.0f;
+      float curAlt = (hasFix && gps.altitude.isValid()) ? (float)gps.altitude.meters() : 0.0f;
+      int curSat = gps.satellites.isValid() ? (int)gps.satellites.value() : 0;
 #else
-        bool hasFix = false;
-        float curLat = 0.0f;
-        float curLon = 0.0f;
-        float curAlt = 0.0f;
-        int curSat = 0;
+      bool hasFix = false;
+      float curLat = 0.0f;
+      float curLon = 0.0f;
+      float curAlt = 0.0f;
+      int curSat = 0;
 #endif
 
-        DEBUG_PORT.printf("✅ DATA: RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
-                          liveRpm, liveSpeed, liveTemp, liveVolt, liveFuel, (int)telemetryBuffer.size());
+      DEBUG_PORT.printf("✅ DATA: RPM: %.0f | Speed: %.0f km/h | Temp: %.0f C | Volt: %.1f V | Fuel: %.1f L/h | Buffer: %d\n", 
+                        liveRpm, liveSpeed, liveTemp, liveVolt, liveFuel, (int)telemetryBuffer.size());
 
-        if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
-        if (telemetryBuffer.size() >= MAX_BUFFER_SIZE) {
-          telemetryBuffer.erase(telemetryBuffer.begin());
-        }
-        telemetryBuffer.push_back({liveRpm, liveSpeed, liveTemp, liveVolt, liveFuel, dt, curLat, curLon, curAlt, curSat, hasFix});
-        if (dataMutex) xSemaphoreGive(dataMutex);
+      if (dataMutex) xSemaphoreTake(dataMutex, portMAX_DELAY);
+      if (telemetryBuffer.size() >= MAX_BUFFER_SIZE) {
+        telemetryBuffer.erase(telemetryBuffer.begin());
       }
+      telemetryBuffer.push_back({liveRpm, liveSpeed, liveTemp, liveVolt, liveFuel, dt, curLat, curLon, curAlt, curSat, hasFix});
+      if (dataMutex) xSemaphoreGive(dataMutex);
     }
   }
 

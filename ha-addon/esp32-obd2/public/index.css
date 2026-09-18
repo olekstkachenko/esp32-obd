@@ -995,4 +995,27 @@ h1 {
     gap: 12px;
 }
 
+.form-row-category {
+    display: grid;
+    grid-template-columns: 1fr 75px;
+    gap: 12px;
+}
+
+@media (max-width: 600px) {
+    .modal-content {
+        padding: 18px 14px !important;
+        gap: 14px !important;
+    }
+    .form-group {
+        margin-bottom: 10px;
+    }
+    .form-label {
+        font-size: 0.8rem;
+    }
+    .form-input {
+        padding: 8px 10px;
+        font-size: 0.85rem;
+    }
+}
+
 

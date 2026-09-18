@@ -571,9 +571,9 @@ router.get('/analytics', async (req, res) => {
       daily,
       style_distribution: styleDistribution,
       records: {
-        longest: longestTrip || null,
-        fastest: fastestTrip || null,
-        economical: economicalTrip ? { ...economicalTrip, l_per_100km: parseFloat(Number(economicalTrip.l_per_100km).toFixed(1)) } : null
+        longest: longestTrip ? { ...longestTrip, distance_km: parseFloat(Number(longestTrip.distance_km).toFixed(2)) } : null,
+        fastest: fastestTrip ? { ...fastestTrip, max_speed: Math.round(fastestTrip.max_speed), avg_speed: Math.round(fastestTrip.avg_speed || 0) } : null,
+        economical: economicalTrip ? { ...economicalTrip, l_per_100km: parseFloat(Number(economicalTrip.l_per_100km).toFixed(1)), distance_km: parseFloat(Number(economicalTrip.distance_km).toFixed(2)) } : null
       }
     });
   } catch (err) {

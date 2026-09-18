@@ -204,21 +204,21 @@
                         <div style="width: 140px; height: 140px; position: relative;">
                             <canvas id="drivingStyleChart"></canvas>
                         </div>
-                        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.82rem;">
+                        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.82rem; color: #cbd5e1;">
                             <div style="display: flex; align-items: center; gap: 8px;">
-                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #38bdf8;"></span>
-                                <span>Місто (&lt;50): <b id="styleCityVal" style="color:#fff;">0%</b></span>
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #38bdf8; flex-shrink: 0;"></span>
+                                <span style="color: #cbd5e1;">Місто (&lt;50): <b id="styleCityVal" style="color:#ffffff; font-weight: 700;">0%</b></span>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
-                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #a855f7;"></span>
-                                <span>Змішаний (50-80): <b id="styleMixedVal" style="color:#fff;">0%</b></span>
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #a855f7; flex-shrink: 0;"></span>
+                                <span style="color: #cbd5e1;">Змішаний (50-80): <b id="styleMixedVal" style="color:#ffffff; font-weight: 700;">0%</b></span>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
-                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #22c55e;"></span>
-                                <span>Траса (&gt;80): <b id="styleHighwayVal" style="color:#fff;">0%</b></span>
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #22c55e; flex-shrink: 0;"></span>
+                                <span style="color: #cbd5e1;">Траса (&gt;80): <b id="styleHighwayVal" style="color:#ffffff; font-weight: 700;">0%</b></span>
                             </div>
-                            <div style="display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: 0.75rem; margin-top: 4px;">
-                                <span>⏱️ Холостий хід: <b id="styleIdleVal" style="color:#e2e8f0;">0 хв</b></span>
+                            <div style="display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: 0.78rem; margin-top: 4px;">
+                                <span>⏱️ Холостий хід: <b id="styleIdleVal" style="color:#ffffff; font-weight: 700;">0 хв</b></span>
                             </div>
                         </div>
                     </div>
@@ -596,31 +596,31 @@
                     <label class="form-label">Назва регламентної роботи:</label>
                     <input type="text" id="addServiceTitle" class="form-input" placeholder="напр. Заміна ременя ГРМ + ролики">
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
+                <div class="form-row-category">
+                    <div class="form-group" style="margin-bottom: 0;">
                         <label class="form-label">Категорія:</label>
                         <select id="addServiceCategory" class="form-input" style="background: rgba(15, 23, 42, 0.9);">
-                            <option value="engine">Двигун & Мастило</option>
+                            <option value="engine">Двигун &amp; Мастило</option>
                             <option value="transmission">АКПП / Роздатка / Мости</option>
                             <option value="brakes">Гальмівна система</option>
                             <option value="filters">Фільтри</option>
-                            <option value="chassis">Ходова & Підвіска</option>
-                            <option value="electrical">Електрика & Свічки</option>
+                            <option value="chassis">Ходова &amp; Підвіска</option>
+                            <option value="electrical">Електрика &amp; Свічки</option>
                             <option value="cooling">Охолодження</option>
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Іконка (емодзі):</label>
-                        <input type="text" id="addServiceIcon" class="form-input" value="🔧" style="text-align: center;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label">Іконка:</label>
+                        <input type="text" id="addServiceIcon" class="form-input" value="🔧" style="text-align: center; font-size: 1.1rem; padding: 8px 2px;">
                     </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
+                <div class="form-row" style="margin-top: 12px;">
+                    <div class="form-group" style="margin-bottom: 0;">
                         <label class="form-label">Інтервал (км):</label>
                         <input type="number" id="addServiceIntervalKm" class="form-input" value="10000" step="500">
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Інтервал (місяців):</label>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label">Період (міс):</label>
                         <input type="number" id="addServiceIntervalMonths" class="form-input" value="12" step="1">
                     </div>
                 </div>
@@ -1351,9 +1351,9 @@
 
                 // Records
                 const rec = data.records || {};
-                document.getElementById('recLongest').innerText = rec.longest ? `${rec.longest.distance_km} km` : '--';
-                document.getElementById('recFastest').innerText = rec.fastest ? `${rec.fastest.max_speed} km/h` : '--';
-                document.getElementById('recEconomical').innerText = rec.economical ? `${rec.economical.l_per_100km} л/100км` : '--';
+                document.getElementById('recLongest').innerText = rec.longest ? `${Number(rec.longest.distance_km || 0).toFixed(2)} km` : '--';
+                document.getElementById('recFastest').innerText = rec.fastest ? `${Math.round(rec.fastest.max_speed || 0)} km/h` : '--';
+                document.getElementById('recEconomical').innerText = rec.economical ? `${Number(rec.economical.l_per_100km || 0).toFixed(1)} л/100км` : '--';
 
                 // Trend Chart (Bar + Line for Distance and Cost)
                 const daily = data.daily || [];

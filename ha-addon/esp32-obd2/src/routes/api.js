@@ -222,20 +222,13 @@ router.get('/data', async (req, res) => {
   }
 });
 
-// 4.1 Reset / Clear All Database Telemetry & Test Logs
+// 4.1 Reset / Clear Database Telemetry & Trips (Preserves Device Logs)
 router.post('/reset-data', async (req, res) => {
   try {
     await db.runAsync(`DELETE FROM obd_records`);
     await db.runAsync(`DELETE FROM trips`);
-    deviceLogs.length = 0;
-    latestDeviceStatus.last_seen = null;
-    latestDeviceStatus.wifi = 'unknown';
-    latestDeviceStatus.bt = 'disconnected';
-    latestDeviceStatus.ip = '--';
-    latestDeviceStatus.rssi = null;
-    latestDeviceStatus.free_heap = '--';
     tripService.reset();
-    res.json({ success: true, message: 'All telemetry records and test data purged' });
+    res.json({ success: true, message: 'All telemetry records and trips purged' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

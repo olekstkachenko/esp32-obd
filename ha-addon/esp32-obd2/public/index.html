@@ -434,7 +434,7 @@
                         <span>⚠️</span> Очищення бази даних
                     </div>
                     <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;">
-                        Видаляє всі тестові записи телеметрії, історію поїздок та логи
+                        Видаляє всі тестові записи телеметрії та історію поїздок (логи прошивки зберігаються)
                     </div>
                 </div>
                 <button class="btn-sm" style="background: rgba(239, 68, 68, 0.25); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.5); padding: 8px 14px; font-weight: 600; white-space: nowrap;" onclick="resetAllData()">
@@ -783,14 +783,13 @@
         }
 
         async function resetAllData() {
-            if (!confirm('Очистити всі тестові записи, історію поїздок та логи з бази?')) return;
+            if (!confirm('Очистити всі тестові записи телеметрії та історію поїздок з бази? (Логи ESP32 залишаться)')) return;
             try {
                 await fetch(apiUrl('api/reset-data'), { method: 'POST' });
                 fetchLatest();
                 fetchHistory();
-                fetchDeviceStatus();
                 if (currentTab === 'trips') loadTrips();
-                alert('Всі тестові дані успішно очищено!');
+                alert('Тестові поїздки та телеметрію успішно очищено! Логи збережено.');
             } catch (err) {
                 alert('Помилка очищення');
             }

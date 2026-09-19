@@ -769,7 +769,9 @@
             }
         }
 
-        // Settings (Fuel Price)
+        let currentSelectedStation = '';
+
+        // Settings (Fuel Price & Selected Station)
         async function loadSettings() {
             try {
                 const res = await fetch(apiUrl('api/settings'));
@@ -777,21 +779,34 @@
                 if (data.fuel_price) {
                     document.getElementById('globalFuelPriceInput').value = Number(data.fuel_price).toFixed(2);
                 }
+                if (data.selected_station) {
+                    currentSelectedStation = data.selected_station;
+                }
             } catch (err) {}
         }
 
-        async function saveFuelPrice(val) {
+        async function saveFuelPrice(val, stationName) {
             const inputVal = val !== undefined ? val : parseFloat(document.getElementById('globalFuelPriceInput').value);
             if (isNaN(inputVal) || inputVal <= 0) return;
+
+            if (stationName !== undefined) {
+                currentSelectedStation = stationName;
+            } else if (val === undefined) {
+                currentSelectedStation = '';
+            }
 
             document.getElementById('globalFuelPriceInput').value = Number(inputVal).toFixed(2);
             try {
                 await fetch(apiUrl('api/settings'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fuel_price: inputVal })
+                    body: JSON.stringify({ 
+                        fuel_price: inputVal,
+                        selected_station: currentSelectedStation 
+                    })
                 });
                 if (currentTab === 'trips') loadTrips();
+                if (currentTab === 'gas') loadGasStations();
             } catch (err) {}
         }
 
@@ -1146,7 +1161,9 @@
                 container.innerHTML = stations.map(s => {
                     const brandClass = stationBrandClasses[s.station] || '';
                     const icon = stationIcons[s.station] || '⛽';
-                    const isSelected = Math.abs(currentPriceVal - s.price) < 0.05;
+                    const isSelected = currentSelectedStation 
+                        ? (s.station === currentSelectedStation && Math.abs(currentPriceVal - s.price) < 0.05)
+                        : false;
 
                     return `
                         <div class="glass-panel station-card ${brandClass}">
@@ -1180,7 +1197,7 @@
         }
 
         async function applyStationPrice(price, stationName) {
-            await saveFuelPrice(price);
+            await saveFuelPrice(price, stationName);
             loadGasStations();
         }
 

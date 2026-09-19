@@ -432,7 +432,7 @@ router.get('/settings', async (req, res) => {
 });
 
 router.post('/settings', async (req, res) => {
-  const { fuel_price } = req.body || {};
+  const { fuel_price, selected_station } = req.body || {};
   const price = parseFloat(fuel_price);
   if (isNaN(price) || price <= 0 || price > 200) {
     return res.status(400).json({ error: 'Invalid fuel price. Must be a number between 1 and 200 UAH.' });
@@ -444,6 +444,13 @@ router.post('/settings', async (req, res) => {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
       [price.toFixed(2)]
     );
+    if (selected_station !== undefined) {
+      await db.runAsync(
+        `INSERT INTO settings (key, value, updated_at) VALUES ('selected_station', ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+        [String(selected_station)]
+      );
+    }
     res.json({ success: true, fuel_price: price.toFixed(2) });
   } catch (err) {
     res.status(500).json({ error: err.message });

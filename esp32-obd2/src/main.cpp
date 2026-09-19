@@ -345,7 +345,8 @@ void flushBufferToServer() {
     jsonPayload += "\"speed\":" + String(r.speed, 1) + ",";
     jsonPayload += "\"temp\":" + String(r.temp, 1) + ",";
     jsonPayload += "\"voltage\":" + String(r.volt, 1) + ",";
-    jsonPayload += "\"fuel_rate\":" + String(r.fuel, 1);
+    jsonPayload += "\"fuel_rate\":" + String(r.fuel, 1) + ",";
+    jsonPayload += "\"dt\":" + String(r.dt, 2);
     if (r.hasGps) {
       jsonPayload += ",\"lat\":" + String(r.lat, 6);
       jsonPayload += ",\"lon\":" + String(r.lon, 6);
@@ -391,7 +392,7 @@ void flushBufferToServer() {
                      ",\"temp\":" + String(r.temp, 1) +
                      ",\"voltage\":" + String(r.volt, 1) +
                      ",\"fuel_rate\":" + String(r.fuel, 1) +
-                     ",\"dt\":" + String(r.dt, 1);
+                     ",\"dt\":" + String(r.dt, 2);
       if (r.hasGps) {
         jsonPayload += ",\"lat\":" + String(r.lat, 6);
         jsonPayload += ",\"lon\":" + String(r.lon, 6);
@@ -815,8 +816,10 @@ void loop() {
     unsigned long pushInterval = engineRunning ? 500 : 1000;
 
     if (millis() - lastPushTime >= pushInterval) {
-      float dt = (lastPushTime > 0) ? ((millis() - lastPushTime) / 1000.0f) : (pushInterval / 1000.0f);
-      lastPushTime = millis();
+      unsigned long nowMs = millis();
+      float dt = (lastPushTime > 0) ? ((nowMs - lastPushTime) / 1000.0f) : (pushInterval / 1000.0f);
+      lastPushTime = nowMs;
+      if (dt < 0.1f || dt > 3.0f) dt = (pushInterval / 1000.0f);
 
       // Check engine state transitions
       if (liveRpm > 350.0f || liveSpeed > 2.0f) {

@@ -76,7 +76,7 @@ async function updateTripStats(tripId, speedKmh, fuelRateLh, timeDiffSeconds) {
   // Pajero 4 physical speed cap (185 km/h) to filter out ELM327 glitches (e.g. 255 km/h artifacts)
   const rawSpeed = Number(speedKmh) || 0;
   const cleanSpeed = (rawSpeed >= 0 && rawSpeed <= 185) ? rawSpeed : 0;
-  const validDt = (timeDiffSeconds > 0 && timeDiffSeconds <= 60) ? Number(timeDiffSeconds) : 0;
+  const validDt = (timeDiffSeconds > 0 && timeDiffSeconds <= 60.0) ? Number(timeDiffSeconds) : 0.5;
   const distanceKm = (cleanSpeed > 0 && validDt > 0) ? (cleanSpeed * (validDt / 3600.0)) : 0;
   
   let addedFuel = 0;

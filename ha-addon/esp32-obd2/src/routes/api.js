@@ -72,7 +72,7 @@ router.delete('/device/logs', (req, res) => {
 
 // 2. Single OBD Record Ingestion from ESP32
 router.post('/obd', async (req, res) => {
-  const { rpm = 0, speed = 0, temp = 0, voltage = 0, fuel_rate = 0, lat, lon, alt, sat } = req.body || {};
+  const { rpm = 0, speed = 0, temp = 0, voltage = 0, fuel_rate = 0, dt, lat, lon, alt, sat } = req.body || {};
   const now = Date.now();
   
   const cleanRpm = Math.max(0, Math.min(10000, Number(rpm) || 0));
@@ -87,8 +87,15 @@ router.post('/obd', async (req, res) => {
 
   try {
     const tripId = await tripService.ensureActiveTrip();
-    const lastTime = tripService.getLastRecordTime();
-    const timeDiffSeconds = lastTime ? Math.min((now - lastTime) / 1000.0, 60) : 0;
+    
+    // Priority: use hardware device measured dt if provided; otherwise calculate with safe fallback (0.5s nominal)
+    let timeDiffSeconds = 0.5;
+    if (dt !== undefined && !isNaN(dt) && Number(dt) > 0 && Number(dt) <= 60.0) {
+      timeDiffSeconds = Number(dt);
+    } else {
+      const lastTime = tripService.getLastRecordTime();
+      timeDiffSeconds = lastTime ? Math.min(Math.max(0.1, (now - lastTime) / 1000.0), 5.0) : 0.5;
+    }
     tripService.setLastRecordTime(now);
 
     await db.runAsync(
@@ -128,7 +135,7 @@ router.post('/obd/batch', async (req, res) => {
           const temp = Math.max(-50, Math.min(150, Number(r.temp) || 0));
           const volt = Math.max(0, Math.min(30, Number(r.voltage || r.volt) || 0));
           const fuel = Math.max(0, Math.min(100, Number(r.fuel_rate || r.fuel) || 0));
-          const dt = (r.dt && Number(r.dt) > 0 && Number(r.dt) <= 60) ? Number(r.dt) : 1.0;
+          const dt = (r.dt && Number(r.dt) > 0 && Number(r.dt) <= 60.0) ? Number(r.dt) : 0.5;
           const lat = (r.lat !== undefined && r.lat !== null && !isNaN(r.lat) && Math.abs(r.lat) <= 90) ? Number(r.lat) : null;
           const lon = (r.lon !== undefined && r.lon !== null && !isNaN(r.lon) && Math.abs(r.lon) <= 180) ? Number(r.lon) : null;
           const alt = (r.alt !== undefined && r.alt !== null && !isNaN(r.alt)) ? Number(r.alt) : null;
@@ -154,7 +161,7 @@ router.post('/obd/batch', async (req, res) => {
           `UPDATE trips SET 
             distance_km = distance_km + ?, 
             fuel_liters = fuel_liters + ?,
-            avg_speed = (SELECT COALESCE(AVG(speed), 0) FROM obd_records WHERE trip_id = ? AND speed > 0),
+            avg_speed = (SELECT COALESCE(AVG(speed), 0) FROM obd_records WHERE trip_id = ? AND speed > 0 AND speed <= 185),
             max_speed = MAX(COALESCE(max_speed, 0), ?)
           WHERE id = ?`,
           [totalAddedDist, totalAddedFuel, tripId, batchMaxSpeed, tripId],
@@ -169,6 +176,9 @@ router.post('/obd/batch', async (req, res) => {
         );
       });
     });
+
+    // Update lastRecordTime so subsequent single /obd records have clean dt
+    tripService.setLastRecordTime(Date.now());
 
     res.status(201).json({ success: true, count: records.length, tripId });
   } catch (err) {

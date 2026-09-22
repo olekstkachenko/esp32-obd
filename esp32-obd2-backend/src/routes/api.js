@@ -80,6 +80,8 @@ router.delete('/device/logs', (req, res) => {
   res.json({ success: true, message: 'Logs and diagnostics state cleared' });
 });
 
+let volatileLiveData = null;
+
 // 2. Single OBD Record Ingestion from ESP32
 router.post('/obd', async (req, res) => {
   const { rpm = 0, speed = 0, temp = 0, voltage = 0, fuel_rate = 0, dt, lat, lon, alt, sat } = req.body || {};
@@ -95,8 +97,16 @@ router.post('/obd', async (req, res) => {
   const cleanAlt = (alt !== undefined && alt !== null && !isNaN(alt)) ? Number(alt) : null;
   const cleanSat = (sat !== undefined && sat !== null && !isNaN(sat)) ? parseInt(sat, 10) : null;
 
+  volatileLiveData = { rpm: cleanRpm, speed: cleanSpeed, temp: cleanTemp, voltage: cleanVolt, fuel_rate: cleanFuel, timestamp: new Date().toISOString() };
+
   try {
-    const tripId = await tripService.ensureActiveTrip();
+    let tripId = tripService.getCurrentTripId();
+    if (!tripId && cleanRpm === 0 && cleanSpeed === 0) {
+      // Do not create a new trip or store records if engine is off
+      return res.status(201).json({ success: true, message: 'Ignored (standby)' });
+    }
+
+    tripId = await tripService.ensureActiveTrip();
     
     // Priority: use hardware device measured dt if provided; otherwise calculate with safe fallback (0.5s nominal)
     let timeDiffSeconds = 0.5;
@@ -129,7 +139,28 @@ router.post('/obd/batch', async (req, res) => {
   }
 
   try {
-    const tripId = await tripService.ensureActiveTrip();
+    if (records.length > 0) {
+      const last = records[records.length - 1];
+      volatileLiveData = { 
+        rpm: Math.max(0, Math.min(10000, Number(last.rpm) || 0)), 
+        speed: Math.max(0, Math.min(185, Number(last.speed) || 0)), 
+        temp: Math.max(-50, Math.min(150, Number(last.temp) || 0)), 
+        voltage: Math.max(0, Math.min(30, Number(last.voltage || last.volt) || 0)), 
+        fuel_rate: Math.max(0, Math.min(100, Number(last.fuel_rate || last.fuel) || 0)), 
+        timestamp: new Date().toISOString() 
+      };
+    }
+
+    let tripId = tripService.getCurrentTripId();
+    if (!tripId) {
+      // Check if there's any record in this batch where the engine is actually running
+      const hasRunningEngine = records.some(r => Number(r.rpm) > 0);
+      if (!hasRunningEngine) {
+        return res.status(201).json({ success: true, count: 0, message: 'Skipped batch (standby)' });
+      }
+    }
+
+    tripId = await tripService.ensureActiveTrip();
     let totalAddedDist = 0;
     let totalAddedFuel = 0;
     let batchMaxSpeed = 0;
@@ -223,12 +254,21 @@ router.get('/data', async (req, res) => {
     const isOnline = lastSeenMs > 0 && (Date.now() - lastSeenMs < 25000);
     
     // Check if latest record was generated in the last 25 seconds (safe UTC parse)
-    const recordTimeMs = latestRecord && latestRecord.timestamp ? parseTimestamp(latestRecord.timestamp) : 0;
+    let recordTimeMs = latestRecord && latestRecord.timestamp ? parseTimestamp(latestRecord.timestamp) : 0;
+    let volatileTimeMs = volatileLiveData && volatileLiveData.timestamp ? parseTimestamp(volatileLiveData.timestamp) : 0;
+    
+    // Choose the freshest data (volatile memory or database)
+    let bestLiveData = latestRecord;
+    if (volatileTimeMs > recordTimeMs) {
+      bestLiveData = volatileLiveData;
+      recordTimeMs = volatileTimeMs;
+    }
+
     const isFreshRecord = recordTimeMs > 0 && (Date.now() - recordTimeMs < 25000);
 
     // If offline or record is old/stale, zero out the live gauges so users don't see frozen old data
-    const liveData = (isOnline || isFreshRecord) && latestRecord 
-      ? latestRecord 
+    const liveData = (isOnline || isFreshRecord) && bestLiveData 
+      ? bestLiveData 
       : { rpm: 0, speed: 0, temp: 0, voltage: 0, fuel_rate: 0 };
 
     res.json({

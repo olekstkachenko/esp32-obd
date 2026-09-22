@@ -17,7 +17,7 @@ const latestDeviceStatus = {
 };
 
 // 1. Device Diagnostics Endpoint
-router.post('/device/log', (req, res) => {
+router.post('/device/log', async (req, res) => {
   const { message, level, bt_status, wifi_status, free_heap, rssi, ip } = req.body;
   const now = new Date();
   const timestamp = now.toLocaleTimeString('uk-UA', { timeZone: 'Europe/Kyiv', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -28,7 +28,17 @@ router.post('/device/log', (req, res) => {
     if (deviceLogs.length > MAX_LOGS) deviceLogs.shift();
   }
 
-  if (bt_status) latestDeviceStatus.bt = String(bt_status);
+  if (bt_status) {
+    latestDeviceStatus.bt = String(bt_status);
+    if (bt_status === 'engine_off') {
+      try {
+        await tripService.finishCurrentTrip();
+      } catch (e) {
+        console.error('[API] Error finishing trip on engine_off:', e.message);
+      }
+    }
+  }
+
   if (wifi_status) latestDeviceStatus.wifi = String(wifi_status);
   if (free_heap !== undefined) latestDeviceStatus.free_heap = free_heap;
   if (rssi !== undefined) latestDeviceStatus.rssi = rssi;

@@ -756,13 +756,16 @@ void loop() {
       }
 
       case STATE_SPEED: {
-        int32_t s = myELM327.kph();
+        int32_t raw_s = myELM327.kph();
         if (myELM327.nb_rx_state == ELM_SUCCESS) {
-          // Pajero 4 physical cap: 185 km/h. Discard ELM327 artifacts (e.g. 255 / 300 km/h)
-          if (s >= 0 && s <= 185) {
+          // BUGFIX: Pajero 4 ECU incorrectly multiplies speed by 1.609 (thinks internal value is MPH when it's already KM/H)
+          float s = (float)raw_s / 1.60934f;
+          
+          // Pajero 4 physical cap: 185 km/h. Discard ELM327 artifacts
+          if (s >= 0.0f && s <= 185.0f) {
             // Delta-V glitch protection: ignore instant acceleration jump > 35 km/h per second
-            if (liveSpeed <= 0.0f || s <= (int32_t)liveSpeed || ((float)s - liveSpeed) <= 35.0f) {
-              liveSpeed = (float)s;
+            if (liveSpeed <= 0.0f || s <= liveSpeed || (s - liveSpeed) <= 35.0f) {
+              liveSpeed = s;
             }
           }
           // Prioritize coolant/voltage when engine is stopped, or query every 2.5s while driving

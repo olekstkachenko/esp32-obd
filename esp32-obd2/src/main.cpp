@@ -184,8 +184,8 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
 
   bool isHttps = url.startsWith("https://");
 
-  // Prevent RAM collision ONLY for heavy HTTPS if Bluetooth is negotiating connection
-  if (isHttps && (isBtConnecting || ESP.getFreeHeap() < 24000)) {
+  // Prevent RAM collision ONLY for heavy HTTPS if Bluetooth is actively negotiating connection AND heap is low
+  if (isHttps && isBtConnecting && ESP.getFreeHeap() < 30000) {
     DEBUG_PORT.printf("⏳ [HTTP Deferred] BT Connecting (%d) | Free Heap: %d KB\n", isBtConnecting, (int)(ESP.getFreeHeap() / 1024));
     outCode = -2;
     return false;
@@ -583,11 +583,11 @@ void ensureELMConnected() {
     elmConnected = false;
     elmInitialized = false;
     
-    if (millis() - lastELMRetry > 10000) {
-      lastELMRetry = millis();
+    if (millis() - lastELMRetry > 15000) {
       if (connectToELM327()) {
         elmConnected = true;
       }
+      lastELMRetry = millis();
     }
     return;
   }
@@ -758,8 +758,8 @@ void loop() {
       case STATE_SPEED: {
         int32_t raw_s = myELM327.kph();
         if (myELM327.nb_rx_state == ELM_SUCCESS) {
-          // BUGFIX: Pajero 4 ECU incorrectly multiplies speed by 1.609 (thinks internal value is MPH when it's already KM/H)
-          float s = (float)raw_s / 1.60934f;
+          // Standard OBD-II PID 010D returns vehicle speed directly in km/h (0-255 km/h)
+          float s = (float)raw_s;
           
           // Pajero 4 physical cap: 185 km/h. Discard ELM327 artifacts
           if (s >= 0.0f && s <= 185.0f) {

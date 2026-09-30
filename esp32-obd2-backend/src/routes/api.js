@@ -77,6 +77,7 @@ router.delete('/device/logs', (req, res) => {
   latestDeviceStatus.free_heap = '--';
   latestDeviceStatus.rssi = null;
   latestDeviceStatus.last_seen = null;
+  volatileLiveData = null;
   res.json({ success: true, message: 'Logs and diagnostics state cleared' });
 });
 
@@ -101,12 +102,13 @@ router.post('/obd', async (req, res) => {
 
   try {
     let tripId = tripService.getCurrentTripId();
-    if (!tripId && cleanRpm === 0 && cleanSpeed === 0) {
-      // Do not create a new trip or store records if engine is off
-      return res.status(201).json({ success: true, message: 'Ignored (standby)' });
+    if (!tripId) {
+      if (cleanRpm === 0 && cleanSpeed === 0) {
+        // Standby mode: live data updated in memory without creating a blank trip
+        return res.status(201).json({ success: true, message: 'Live data updated (standby)' });
+      }
+      tripId = await tripService.ensureActiveTrip();
     }
-
-    tripId = await tripService.ensureActiveTrip();
     
     // Priority: use hardware device measured dt if provided; otherwise calculate with safe fallback (0.5s nominal)
     let timeDiffSeconds = 0.5;
@@ -154,13 +156,13 @@ router.post('/obd/batch', async (req, res) => {
     let tripId = tripService.getCurrentTripId();
     if (!tripId) {
       // Check if there's any record in this batch where the engine is actually running
-      const hasRunningEngine = records.some(r => Number(r.rpm) > 0);
+      const hasRunningEngine = records.some(r => Number(r.rpm) > 0 || Number(r.speed) > 0);
       if (!hasRunningEngine) {
-        return res.status(201).json({ success: true, count: 0, message: 'Skipped batch (standby)' });
+        return res.status(201).json({ success: true, count: records.length, message: 'Live data updated (standby batch)' });
       }
+      tripId = await tripService.ensureActiveTrip();
     }
 
-    tripId = await tripService.ensureActiveTrip();
     let totalAddedDist = 0;
     let totalAddedFuel = 0;
     let batchMaxSpeed = 0;
@@ -247,6 +249,9 @@ router.get('/data', async (req, res) => {
     if (activeId) {
       const row = await db.getAsync(`SELECT distance_km, avg_speed, max_speed FROM trips WHERE id = ?`, [activeId]);
       if (row) tripStats = row;
+    } else {
+      const lastTrip = await db.getAsync(`SELECT distance_km, avg_speed, max_speed FROM trips ORDER BY id DESC LIMIT 1`);
+      if (lastTrip) tripStats = lastTrip;
     }
 
     // Check if device is actively online (heartbeat/log in the last 25 seconds)
@@ -287,6 +292,7 @@ router.post('/reset-data', async (req, res) => {
   try {
     await db.runAsync(`DELETE FROM obd_records`);
     await db.runAsync(`DELETE FROM trips`);
+    volatileLiveData = null;
     tripService.reset();
     res.json({ success: true, message: 'All telemetry records and trips purged' });
   } catch (err) {

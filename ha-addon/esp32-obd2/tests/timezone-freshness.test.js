@@ -93,6 +93,8 @@ test('TIMEZONE 1: Fresh live record generated just now is detected as live (not 
 });
 
 test('TIMEZONE 2: Record generated with SQLite UTC timestamp format is parsed accurately', async () => {
+  await request('POST', '/api/reset-data');
+  await db.runAsync(`INSERT INTO trips (id, status) VALUES (1, 'active')`);
   // Directly insert a record with SQLite standard format 'YYYY-MM-DD HH:MM:SS'
   const utcNow = new Date().toISOString().replace('T', ' ').substring(0, 19);
   await db.runAsync(
@@ -108,6 +110,8 @@ test('TIMEZONE 2: Record generated with SQLite UTC timestamp format is parsed ac
 });
 
 test('TIMEZONE 3: Expired record older than 25 seconds is zeroed out on UI', async () => {
+  await request('POST', '/api/reset-data');
+  await db.runAsync(`INSERT INTO trips (id, status) VALUES (1, 'active')`);
   // Insert an old record (1 hour ago)
   const oneHourAgo = new Date(Date.now() - 3600000).toISOString().replace('T', ' ').substring(0, 19);
   await db.runAsync(

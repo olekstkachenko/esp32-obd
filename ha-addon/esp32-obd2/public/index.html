@@ -61,7 +61,7 @@
             <section class="trip-summary glass-panel">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div class="trip-header">Поточна поїздка</div>
-                    <button class="btn-sm btn-finish" onclick="finishTrip()">🏁 Завершити сесію</button>
+                    <button id="btnFinishTrip" class="btn-sm btn-finish" onclick="finishTrip()">🏁 Завершити сесію</button>
                 </div>
                 <div class="trip-metrics">
                     <div class="metric-mini">
@@ -834,6 +834,20 @@
                 document.getElementById('tripDist').innerText = Number(data.trip.distance_km || 0).toFixed(1);
                 document.getElementById('tripAvgSpeed').innerText = Math.round(data.trip.avg_speed || 0);
                 document.getElementById('tripMaxSpeed').innerText = Math.round(data.trip.max_speed || 0);
+
+                const isTripActive = Boolean(data.trip && data.trip.is_active);
+                const finishBtn = document.getElementById('btnFinishTrip');
+                if (finishBtn) {
+                    if (isTripActive) {
+                        finishBtn.disabled = false;
+                        finishBtn.style.opacity = '1';
+                        finishBtn.innerText = '🏁 Завершити сесію';
+                    } else {
+                        finishBtn.disabled = true;
+                        finishBtn.style.opacity = '0.5';
+                        finishBtn.innerText = '✓ Сесія не активна';
+                    }
+                }
                 
                 if (isStale) {
                     document.getElementById('currentSpeed').innerText = '0';
@@ -1110,11 +1124,14 @@
         }
 
         async function finishTrip() {
-            if (!confirm('Завершити поточну активну поїздку?')) return;
+            if (!confirm('Завершити поточну активну поїздку та перенести її в архів?')) return;
             try {
                 await fetch(apiUrl('api/trips/finish'), { method: 'POST' });
-                fetchLatest();
-                alert('Сесію завершено!');
+                document.getElementById('tripDist').innerText = '0.0';
+                document.getElementById('tripAvgSpeed').innerText = '0';
+                document.getElementById('tripMaxSpeed').innerText = '0';
+                await fetchLatest();
+                alert('✅ Сесію успішно завершено! Поїздка збережена у вкладці "Архів".');
             } catch (err) {
                 alert('Помилка завершення сесії');
             }

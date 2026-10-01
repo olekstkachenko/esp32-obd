@@ -246,13 +246,10 @@ router.get('/data', async (req, res) => {
     const activeId = tripService.getCurrentTripId();
     const latestRecord = await db.getAsync(`SELECT * FROM obd_records ORDER BY id DESC LIMIT 1`);
     
-    let tripStats = { distance_km: 0, avg_speed: 0, max_speed: 0 };
+    let tripStats = { distance_km: 0, avg_speed: 0, max_speed: 0, is_active: false };
     if (activeId) {
       const row = await db.getAsync(`SELECT distance_km, avg_speed, max_speed FROM trips WHERE id = ?`, [activeId]);
-      if (row) tripStats = row;
-    } else {
-      const lastTrip = await db.getAsync(`SELECT distance_km, avg_speed, max_speed FROM trips ORDER BY id DESC LIMIT 1`);
-      if (lastTrip) tripStats = lastTrip;
+      if (row) tripStats = { ...row, is_active: true };
     }
 
     // Check if device is actively online (heartbeat/log in the last 25 seconds)

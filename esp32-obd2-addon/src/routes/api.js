@@ -242,6 +242,7 @@ function parseTimestamp(ts) {
 // 4. Latest Telemetry & Active Trip Stats (With Stale Offline Protection)
 router.get('/data', async (req, res) => {
   try {
+    await tripService.autoCloseStaleTrips();
     const activeId = tripService.getCurrentTripId();
     const latestRecord = await db.getAsync(`SELECT * FROM obd_records ORDER BY id DESC LIMIT 1`);
     
@@ -518,6 +519,7 @@ router.get('/analytics', async (req, res) => {
   const { period = 'month', from, to } = req.query;
 
   try {
+    await tripService.autoCloseStaleTrips();
     const settingRow = await db.getAsync(`SELECT value FROM settings WHERE key = 'fuel_price'`);
     const fuelPrice = parseFloat(settingRow ? settingRow.value : '58.50') || 58.50;
 

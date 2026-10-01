@@ -4,6 +4,7 @@ const config = require('./src/config');
 const db = require('./src/db');
 const bot = require('./src/bot');
 const fuelScraper = require('./src/services/fuelScraper');
+const tripService = require('./src/services/tripService');
 const apiRoutes = require('./src/routes/api');
 
 const app = express();
@@ -29,6 +30,10 @@ app.get('/health', (req, res) => {
 // Start Background Services
 fuelScraper.startBackgroundFuelScraper();
 bot.initBot();
+tripService.autoCloseStaleTrips().catch(console.error);
+setInterval(() => {
+  tripService.autoCloseStaleTrips().catch(console.error);
+}, 60000);
 
 // Start Server
 const server = app.listen(config.PORT, () => {

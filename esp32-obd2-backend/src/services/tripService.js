@@ -15,6 +15,15 @@ function setLastRecordTime(time) {
   lastRecordTime = time;
 }
 
+// Helper function to safely parse DB timestamps regardless of timezone format
+function parseTimestamp(ts) {
+  if (!ts) return 0;
+  const str = String(ts).trim();
+  const isoStr = str.includes('T') ? str : (str.replace(' ', 'T') + (str.endsWith('Z') ? '' : 'Z'));
+  const ms = new Date(isoStr).getTime();
+  return isNaN(ms) ? 0 : ms;
+}
+
 // Auto-closes any active trips that haven't received telemetry for > 15 minutes
 async function autoCloseStaleTrips() {
   const TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -33,9 +42,9 @@ async function autoCloseStaleTrips() {
   for (const t of (staleTrips || [])) {
     const rawTime = t.last_rec_time || t.start_time;
     if (rawTime) {
-      const timeMs = new Date(rawTime.endsWith('Z') ? rawTime : rawTime + 'Z').getTime();
-      if (!isNaN(timeMs) && (now - timeMs > TIMEOUT_MS)) {
-        const endTime = t.last_rec_time || t.start_time || new Date().toISOString();
+      const timeMs = parseTimestamp(rawTime);
+      if (timeMs > 0 && (now - timeMs > TIMEOUT_MS)) {
+        const endTime = t.last_rec_time || t.start_time || new Date().toISOString().replace('T', ' ').substring(0, 19);
         await db.runAsync(`UPDATE trips SET status = 'completed', end_time = ? WHERE id = ?`, [endTime, t.id]);
         if (currentTripId === t.id) {
           currentTripId = null;

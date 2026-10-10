@@ -495,6 +495,7 @@ const char* pins[] = {"1234", "0000", "6789", "1111", "8888", "123456", ""};
 
 bool connectToELM327() {
   isBtConnecting = true;
+  clearBluetoothBonds();
   sendLog("🎬 Перевірка Bluetooth. Вільна пам'ять RAM: " + String(ESP.getFreeHeap() / 1024) + " KB", "info", "connecting");
 
   // Крок 1: Пряме швидке підключення до імені "OBDII" (PIN: 1234)
@@ -576,29 +577,31 @@ String getELMStatusStr(int8_t status) {
 }
 
 static unsigned long lastELMRetry = 0;
+static unsigned long lastELMInitAttempt = 0;
 
 void ensureELMConnected() {
   if (!SerialBT.connected()) {
     elmConnected = false;
     elmInitialized = false;
+    lastELMInitAttempt = 0;
     
-    if (millis() - lastELMRetry > 15000) {
+    if (lastELMRetry == 0 || (millis() - lastELMRetry > 10000)) {
+      lastELMRetry = millis();
       if (connectToELM327()) {
         elmConnected = true;
       }
-      lastELMRetry = millis();
     }
     return;
   }
 
-  static unsigned long lastELMInitAttempt = 0;
   if (elmConnected && !elmInitialized) {
-    if (millis() - lastELMInitAttempt > 8000) {
+    if (lastELMInitAttempt == 0 || (millis() - lastELMInitAttempt > 6000)) {
       lastELMInitAttempt = millis();
       sendLog("⚙️ Bluetooth з'єднання є! Ініціалізуємо протокол Pajero 4 CAN...", "info", "connecting");
       if (myELM327.begin(ELM_PORT, false, 2500)) {
         sendLog("🚀 УСПІХ! Протокол ELM327 зв'язано з ЕБУ Pajero 4! Почався збір даних.", "success", "connected");
         elmInitialized = true;
+        lastELMInitAttempt = 0;
       } else {
         sendLog("⚠️ Bluetooth з'єднано, але ЕБУ ще не відповів (" + getELMStatusStr(myELM327.nb_rx_state) + ")", "warn", "connecting");
       }

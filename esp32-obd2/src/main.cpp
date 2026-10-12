@@ -214,7 +214,6 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
     DEBUG_PORT.printf("📡 [HTTP HTTPS] Code: %d (%s) | Free RAM: %d KB (MaxBlock: %d KB)\n", 
                       outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024), (int)(ESP.getMaxAllocHeap() / 1024));
     http.end();
-    secClient.stop();
   } else {
     // Ultra-Fast Plain HTTP for In-Car Hotspot Local Connection (0 KB Crypto Overhead!)
     HTTPClient http;
@@ -578,31 +577,29 @@ String getELMStatusStr(int8_t status) {
 }
 
 static unsigned long lastELMRetry = 0;
-static unsigned long lastELMInitAttempt = 0;
 
 void ensureELMConnected() {
   if (!SerialBT.connected()) {
     elmConnected = false;
     elmInitialized = false;
-    lastELMInitAttempt = 0;
     
-    if (lastELMRetry == 0 || (millis() - lastELMRetry > 10000)) {
-      lastELMRetry = millis();
+    if (millis() - lastELMRetry > 15000) {
       if (connectToELM327()) {
         elmConnected = true;
       }
+      lastELMRetry = millis();
     }
     return;
   }
 
+  static unsigned long lastELMInitAttempt = 0;
   if (elmConnected && !elmInitialized) {
-    if (lastELMInitAttempt == 0 || (millis() - lastELMInitAttempt > 6000)) {
+    if (millis() - lastELMInitAttempt > 8000) {
       lastELMInitAttempt = millis();
       sendLog("⚙️ Bluetooth з'єднання є! Ініціалізуємо протокол Pajero 4 CAN...", "info", "connecting");
       if (myELM327.begin(ELM_PORT, false, 2500)) {
         sendLog("🚀 УСПІХ! Протокол ELM327 зв'язано з ЕБУ Pajero 4! Почався збір даних.", "success", "connected");
         elmInitialized = true;
-        lastELMInitAttempt = 0;
       } else {
         sendLog("⚠️ Bluetooth з'єднано, але ЕБУ ще не відповів (" + getELMStatusStr(myELM327.nb_rx_state) + ")", "warn", "connecting");
       }
@@ -639,9 +636,6 @@ void setup() {
   telemetryBuffer.reserve(30);
   logQueue.reserve(10);
 
-  // Release BLE controller RAM before starting Bluetooth Classic (frees ~30 KB for TLS)
-  esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
-
   // 1. Start Bluetooth Master (Must be started before Wi-Fi for RF coexistence coex_enable)
   if (ELM_PORT.begin("ESP32-OBD2", true)) {
     SerialBT.setPin(elmPin);
@@ -659,11 +653,11 @@ void setup() {
   DEBUG_PORT.printf("📡 Підключення до Wi-Fi точки '%s'...\n", ssid);
   WiFi.begin(ssid, password);
 
-  // 3. Launch Dedicated Network Task on Core 0 (Completely non-blocking, 10KB stack for TLS)
+  // 3. Launch Dedicated Network Task on Core 0 (Completely non-blocking!)
   xTaskCreatePinnedToCore(
     networkTask,
     "NetworkTask",
-    10240,
+    4096,
     NULL,
     1,
     NULL,
@@ -739,10 +733,6 @@ void loop() {
   static float liveVolt = 0.0f;
   static float liveFuel = 0.0f;
 
-  static unsigned long lastValidRpmTime = 0;
-  static unsigned long lastValidSpeedTime = 0;
-  static unsigned long engineLowStart = 0;
-
   static unsigned long lastPushTime = 0;
   static unsigned long lastSlowQuery = 0;
   static bool engineRunning = false;
@@ -756,14 +746,10 @@ void loop() {
         if (myELM327.nb_rx_state == ELM_SUCCESS) {
           if (!isnan(r) && r >= 0 && r <= 8000.0f) {
             liveRpm = r;
-            lastValidRpmTime = millis();
           }
           obdState = STATE_SPEED;
         } else if (myELM327.nb_rx_state != ELM_GETTING_MSG) {
-          // Keep previous RPM during brief communication hiccups; expire after 4s
-          if (millis() - lastValidRpmTime > 4000) {
-            liveRpm = 0.0f;
-          }
+          liveRpm = 0.0f;
           obdState = STATE_SPEED;
         }
         break;
@@ -780,7 +766,6 @@ void loop() {
             // Delta-V glitch protection: ignore instant acceleration jump > 35 km/h per second
             if (liveSpeed <= 0.0f || s <= liveSpeed || (s - liveSpeed) <= 35.0f) {
               liveSpeed = s;
-              lastValidSpeedTime = millis();
             }
           }
           // Prioritize coolant/voltage when engine is stopped, or query every 2.5s while driving
@@ -790,10 +775,7 @@ void loop() {
             obdState = STATE_RPM;
           }
         } else if (myELM327.nb_rx_state != ELM_GETTING_MSG) {
-          // Keep previous speed during brief communication hiccups; expire after 4s
-          if (millis() - lastValidSpeedTime > 4000) {
-            liveSpeed = 0.0f;
-          }
+          liveSpeed = 0.0f;
           if (!engineRunning || (millis() - lastSlowQuery > 2500)) {
             obdState = STATE_COOLANT;
           } else {
@@ -842,9 +824,8 @@ void loop() {
       lastPushTime = nowMs;
       if (dt < 0.1f || dt > 3.0f) dt = (pushInterval / 1000.0f);
 
-      // Check engine state transitions with 6-second debounce for engine_off
+      // Check engine state transitions
       if (liveRpm > 350.0f || liveSpeed > 2.0f) {
-        engineLowStart = 0;
         if (!engineRunning) {
           engineRunning = true;
           ignitionLogged = false;
@@ -852,13 +833,8 @@ void loop() {
         }
       } else {
         if (engineRunning) {
-          if (engineLowStart == 0) {
-            engineLowStart = millis();
-          } else if (millis() - engineLowStart >= 6000) {
-            engineRunning = false;
-            engineLowStart = 0;
-            sendLog("🅿️ Двигун зупинено (Запалювання увімкнено | АКБ: " + String(liveVolt, 1) + "V | Темп: " + String(liveTemp, 0) + "°C)", "info", "engine_off");
-          }
+          engineRunning = false;
+          sendLog("🅿️ Двигун зупинено (Запалювання увімкнено | АКБ: " + String(liveVolt, 1) + "V | Темп: " + String(liveTemp, 0) + "°C)", "info", "engine_off");
         } else if (!ignitionLogged) {
           ignitionLogged = true;
           sendLog("🔋 Запалювання / Режим очікування (АКБ: " + String(liveVolt, 1) + "V | Темп: " + String(liveTemp, 0) + "°C)", "info", "standby");

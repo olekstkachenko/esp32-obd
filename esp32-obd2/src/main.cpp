@@ -214,6 +214,7 @@ bool sendHttpPost(const String& url, const String& jsonPayload, int& outCode) {
     DEBUG_PORT.printf("📡 [HTTP HTTPS] Code: %d (%s) | Free RAM: %d KB (MaxBlock: %d KB)\n", 
                       outCode, http.errorToString(outCode).c_str(), (int)(ESP.getFreeHeap() / 1024), (int)(ESP.getMaxAllocHeap() / 1024));
     http.end();
+    secClient.stop();
   } else {
     // Ultra-Fast Plain HTTP for In-Car Hotspot Local Connection (0 KB Crypto Overhead!)
     HTTPClient http;
@@ -636,6 +637,9 @@ void setup() {
   telemetryBuffer.reserve(30);
   logQueue.reserve(10);
 
+  // Release BLE controller RAM before starting Bluetooth Classic (frees ~30 KB for TLS)
+  esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+
   // 1. Start Bluetooth Master (Must be started before Wi-Fi for RF coexistence coex_enable)
   if (ELM_PORT.begin("ESP32-OBD2", true)) {
     SerialBT.setPin(elmPin);
@@ -653,11 +657,11 @@ void setup() {
   DEBUG_PORT.printf("📡 Підключення до Wi-Fi точки '%s'...\n", ssid);
   WiFi.begin(ssid, password);
 
-  // 3. Launch Dedicated Network Task on Core 0 (Completely non-blocking!)
+  // 3. Launch Dedicated Network Task on Core 0 (Completely non-blocking, 10KB stack for TLS)
   xTaskCreatePinnedToCore(
     networkTask,
     "NetworkTask",
-    4096,
+    10240,
     NULL,
     1,
     NULL,

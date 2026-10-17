@@ -269,8 +269,10 @@ router.get('/data', async (req, res) => {
 
     const isFreshRecord = recordTimeMs > 0 && (Date.now() - recordTimeMs < 25000);
 
-    // If offline or record is old/stale, zero out the live gauges so users don't see frozen old data
-    const liveData = (isOnline || isFreshRecord) && bestLiveData 
+    // Strictly require BOTH active online status AND a fresh telemetry record (<25s).
+    // If the device just booted or the engine is off/scanner disconnected, zero out the live gauges.
+    const isLive = isOnline && isFreshRecord;
+    const liveData = (isLive && bestLiveData) 
       ? bestLiveData 
       : { rpm: 0, speed: 0, temp: 0, voltage: 0, fuel_rate: 0 };
 
@@ -278,7 +280,7 @@ router.get('/data', async (req, res) => {
       latest: liveData,
       trip: tripStats,
       is_online: Boolean(isOnline),
-      is_stale: !isOnline && !isFreshRecord
+      is_stale: !isLive
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

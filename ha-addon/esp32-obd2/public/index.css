@@ -253,7 +253,143 @@ h1 {
 .trips-container {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
+}
+
+.day-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.day-summary-card {
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.75) 0%, rgba(15, 23, 42, 0.88) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.4);
+    border-radius: 16px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: relative;
+    overflow: hidden;
+}
+
+.day-summary-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: linear-gradient(180deg, #38bdf8 0%, #3b82f6 100%);
+    border-radius: 4px 0 0 4px;
+}
+
+.day-summary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.day-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.day-title {
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: #f8fafc;
+    letter-spacing: -0.01em;
+}
+
+.day-trips-count-badge {
+    font-size: 0.75rem;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: rgba(56, 189, 248, 0.15);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    font-weight: 600;
+}
+
+.day-total-cost-badge {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    padding: 4px 12px;
+    border-radius: 20px;
+}
+
+.day-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    background: rgba(15, 23, 42, 0.45);
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.day-stat-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+
+.day-stat-label {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+}
+
+.day-stat-val {
+    font-size: 0.92rem;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.day-stat-val small {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-secondary);
+}
+
+.day-stat-val .sub-val {
+    font-size: 0.72rem;
+    color: #94a3b8;
+    margin-left: 2px;
+}
+
+.day-trips-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-left: 6px;
+    border-left: 2px dashed rgba(255, 255, 255, 0.12);
+    margin-left: 10px;
+}
+
+@media (max-width: 600px) {
+    .day-summary-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px 6px;
+    }
+    .day-trips-list {
+        padding-left: 2px;
+        margin-left: 4px;
+    }
 }
 
 .trips-header-bar {

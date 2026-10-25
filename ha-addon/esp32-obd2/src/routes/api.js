@@ -1019,7 +1019,10 @@ router.post('/reports/telegram-summary', async (req, res) => {
 
     let whereClause = '1=1';
     let periodName = 'за весь час';
-    if (period === 'month') {
+    if (period === 'today' || period === 'day') {
+      whereClause = `DATE(start_time, 'localtime') = DATE('now', 'localtime')`;
+      periodName = 'за сьогодні';
+    } else if (period === 'month') {
       whereClause = `DATE(start_time) >= DATE('now', '-30 days')`;
       periodName = 'за останні 30 днів';
     } else if (period === 'week') {

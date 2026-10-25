@@ -91,6 +91,54 @@ function initBot() {
     }
   });
 
+  bot.command('today', async (ctx) => {
+    try {
+      const db = require('./db');
+      const stats = await db.getAsync(`
+        SELECT COUNT(*) as count,
+               COALESCE(SUM(distance_km), 0) as dist,
+               COALESCE(SUM(duration_seconds), 0) as duration,
+               COALESCE(SUM(fuel_liters), 0) as fuel,
+               COALESCE(AVG(NULLIF(avg_speed, 0)), 0) as speed,
+               COALESCE(MAX(max_speed), 0) as max_speed
+        FROM trips
+        WHERE DATE(start_time, 'localtime') = DATE('now', 'localtime')
+      `);
+
+      const fuelSetting = await db.getAsync("SELECT value FROM settings WHERE key = 'fuel_price'");
+      const price = fuelSetting ? (parseFloat(fuelSetting.value) || 58.50) : 58.50;
+
+      const count = stats ? (stats.count || 0) : 0;
+      const dist = Math.round((stats.dist || 0) * 10) / 10;
+      const durationSec = stats ? (stats.duration || 0) : 0;
+      const fuel = Math.round((stats.fuel || 0) * 10) / 10;
+      const cost = Math.round(fuel * price);
+      const l100 = dist > 0 ? ((fuel / dist) * 100).toFixed(1) : '0.0';
+
+      const durM = Math.floor(durationSec / 60);
+      const durH = Math.floor(durM / 60);
+      const durationText = durH > 0 ? `${durH} год ${durM % 60} хв` : `${durM} хв`;
+
+      const todayStr = new Date().toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' });
+
+      let msg = `📅 *Підсумок за сьогодні (${todayStr})*\n\n`;
+      if (count === 0) {
+        msg += `🚗 Сьогодні збережених поїздок ще не було.`;
+      } else {
+        msg += `🔢 Кількість поїздок: *${count}*\n`;
+        msg += `🛣️ Загальний пробіг: *${dist.toLocaleString('uk-UA')} км*\n`;
+        msg += `⏱️ Час у дорозі: *${durationText}*\n`;
+        msg += `⛽ Витрата пального: *${fuel} л* (~*${l100} л/100км*)\n`;
+        msg += `💰 Витрати за день: *${cost.toLocaleString('uk-UA')} грн*\n`;
+        msg += `⚡ Сер. швидкість: *${Math.round(stats.speed || 0)} км/год* (макс: *${Math.round(stats.max_speed || 0)} км/год*)`;
+      }
+
+      ctx.replyWithMarkdown(msg);
+    } catch(err) {
+      ctx.reply('❌ Помилка формування підсумку за день: ' + err.message);
+    }
+  });
+
   // Clear stuck webhooks before launching polling
   const https = require('https');
   const deleteWebhookUrl = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true`;

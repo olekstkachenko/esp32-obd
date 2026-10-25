@@ -515,11 +515,11 @@
 
                 <!-- Section: Telemetry Charts -->
                 <div id="modalChartsSection" style="display: none;">
-                    <div class="chart-container" style="height: 220px; margin-top: 15px;">
+                    <div class="chart-container" style="height: 240px; margin-top: 15px;">
                         <canvas id="modalSpeedChart"></canvas>
                     </div>
 
-                    <div class="chart-container" style="height: 220px; margin-top: 15px;">
+                    <div class="chart-container" style="height: 240px; margin-top: 20px;">
                         <canvas id="modalRpmChart"></canvas>
                     </div>
                 </div>
@@ -891,13 +891,81 @@
 
         function formatDate(dateStr) {
             if (!dateStr) return 'Нещодавно';
-            const d = new Date(dateStr.replace(' ', 'T') + 'Z');
+            const iso = dateStr.includes('T') ? dateStr : dateStr.replace(' ', 'T') + (dateStr.endsWith('Z') ? '' : 'Z');
+            const d = new Date(iso);
             return d.toLocaleDateString('uk-UA', { 
                 day: 'numeric', 
                 month: 'short', 
                 hour: '2-digit', 
                 minute: '2-digit' 
             });
+        }
+
+        function getTripLocalDate(dateStr) {
+            if (!dateStr) return 'unknown';
+            try {
+                const iso = dateStr.includes('T') ? dateStr : dateStr.replace(' ', 'T') + (dateStr.endsWith('Z') ? '' : 'Z');
+                const d = new Date(iso);
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${y}-${m}-${day}`;
+            } catch (e) {
+                return (dateStr.split(' ')[0]) || 'unknown';
+            }
+        }
+
+        function formatDayHeader(dateKey) {
+            if (!dateKey || dateKey === 'unknown') return '🗓️ Інші поїздки';
+            try {
+                const parts = dateKey.split('-').map(Number);
+                if (parts.length < 3 || isNaN(parts[0])) return `🗓️ ${dateKey}`;
+                const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+                
+                const now = new Date();
+                const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                
+                const yesterday = new Date(now);
+                yesterday.setDate(now.getDate() - 1);
+                const yesterdayKey = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+
+                const dateText = dateObj.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' });
+                const weekday = dateObj.toLocaleDateString('uk-UA', { weekday: 'long' });
+                const capWeekday = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+
+                if (dateKey === todayKey) {
+                    return `📅 Сьогодні • ${dateText}`;
+                } else if (dateKey === yesterdayKey) {
+                    return `📅 Вчора • ${dateText}`;
+                } else {
+                    return `🗓️ ${capWeekday}, ${dateText}`;
+                }
+            } catch (e) {
+                return `🗓️ ${dateKey}`;
+            }
+        }
+
+        function getTripsWord(count) {
+            const rem100 = count % 100;
+            const rem10 = count % 10;
+            if (rem100 >= 11 && rem100 <= 19) return 'поїздок';
+            if (rem10 === 1) return 'поїздка';
+            if (rem10 >= 2 && rem10 <= 4) return 'поїздки';
+            return 'поїздок';
+        }
+
+        function formatTripTimeRange(startStr, endStr) {
+            if (!startStr) return '--:--';
+            try {
+                const sIso = startStr.includes('T') ? startStr : startStr.replace(' ', 'T') + (startStr.endsWith('Z') ? '' : 'Z');
+                const sTime = new Date(sIso).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+                if (!endStr) return sTime;
+                const eIso = endStr.includes('T') ? endStr : endStr.replace(' ', 'T') + (endStr.endsWith('Z') ? '' : 'Z');
+                const eTime = new Date(eIso).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+                return `${sTime} – ${eTime}`;
+            } catch (e) {
+                return startStr.split(' ')[1] || startStr;
+            }
         }
 
         async function loadTrips() {
@@ -907,7 +975,6 @@
             try {
                 const res = await fetch(apiUrl('api/trips'));
                 const trips = await res.json();
-
 
                 if (!trips || trips.length === 0) {
                     listEl.innerHTML = `
@@ -920,60 +987,133 @@
                     return;
                 }
 
-                listEl.innerHTML = trips.map(t => {
-                    const isActive = t.status === 'active';
-                    const durationText = formatDuration(t.duration_seconds);
-                    const dateText = formatDate(t.start_time);
-                    const distKm = parseFloat(t.distance_km || 0).toFixed(2);
-                    const avgSpd = Math.round(parseFloat(t.avg_speed || 0));
-                    const maxSpd = Math.round(parseFloat(t.max_speed || 0));
-                    const fuelL = parseFloat(t.fuel_liters || 0).toFixed(2);
-                    const l100 = parseFloat(t.l_per_100km || 0).toFixed(1);
-                    const costUah = parseFloat(t.trip_cost_uah || 0).toFixed(2);
+                // Group trips by calendar day (local date)
+                const dayGroups = {};
+                for (const t of trips) {
+                    const dateKey = getTripLocalDate(t.start_time);
+                    if (!dayGroups[dateKey]) {
+                        dayGroups[dateKey] = [];
+                    }
+                    dayGroups[dateKey].push(t);
+                }
+
+                // Render day summary card and list of trips for each day
+                const html = Object.keys(dayGroups).map(dateKey => {
+                    const groupTrips = dayGroups[dateKey];
+                    const count = groupTrips.length;
+                    
+                    let dayDist = 0;
+                    let dayDuration = 0;
+                    let dayFuel = 0;
+                    let dayCost = 0;
+                    let dayMaxSpeed = 0;
+
+                    for (const t of groupTrips) {
+                        dayDist += parseFloat(t.distance_km || 0);
+                        dayDuration += parseInt(t.duration_seconds || 0);
+                        dayFuel += parseFloat(t.fuel_liters || 0);
+                        dayCost += parseFloat(t.trip_cost_uah || 0);
+                        const s = parseFloat(t.max_speed || 0);
+                        if (s > dayMaxSpeed) dayMaxSpeed = s;
+                    }
+
+                    const dayAvgSpeed = dayDuration > 0 ? Math.round(dayDist / (dayDuration / 3600)) : 0;
+                    const dayL100 = dayDist > 0 ? ((dayFuel / dayDist) * 100).toFixed(1) : '0.0';
+                    const dayTitle = formatDayHeader(dateKey);
+                    const tripsBadge = `${count} ${getTripsWord(count)}`;
+
+                    const tripsCardsHtml = groupTrips.map(t => {
+                        const isActive = t.status === 'active';
+                        const durationText = formatDuration(t.duration_seconds);
+                        const timeText = formatTripTimeRange(t.start_time, t.end_time);
+                        const distKm = parseFloat(t.distance_km || 0).toFixed(2);
+                        const avgSpd = Math.round(parseFloat(t.avg_speed || 0));
+                        const maxSpd = Math.round(parseFloat(t.max_speed || 0));
+                        const fuelL = parseFloat(t.fuel_liters || 0).toFixed(2);
+                        const l100 = parseFloat(t.l_per_100km || 0).toFixed(1);
+                        const costUah = parseFloat(t.trip_cost_uah || 0).toFixed(2);
+
+                        return `
+                            <div class="glass-panel trip-card">
+                                <div class="trip-card-header">
+                                    <div class="trip-date">🕒 ${timeText}</div>
+                                    <span class="trip-badge ${isActive ? 'badge-active' : 'badge-completed'}">
+                                        ${isActive ? '● В процесі' : 'Завершена'}
+                                    </span>
+                                </div>
+
+                                <div class="trip-card-grid" style="grid-template-columns: repeat(3, 1fr);">
+                                    <div class="trip-stat-item">
+                                        <span class="trip-stat-label">Дистанція</span>
+                                        <span class="trip-stat-val">${distKm} <span style="font-size:0.75rem;font-weight:400;">km</span></span>
+                                    </div>
+                                    <div class="trip-stat-item">
+                                        <span class="trip-stat-label">Тривалість</span>
+                                        <span class="trip-stat-val">${durationText}</span>
+                                    </div>
+                                    <div class="trip-stat-item">
+                                        <span class="trip-stat-label">Сер. швидкість</span>
+                                        <span class="trip-stat-val">${avgSpd} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
+                                    </div>
+                                    <div class="trip-stat-item">
+                                        <span class="trip-stat-label">Макс. швидкість</span>
+                                        <span class="trip-stat-val">${maxSpd} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
+                                    </div>
+                                    <div class="trip-stat-item">
+                                        <span class="trip-stat-label">Витрата</span>
+                                        <span class="trip-stat-val">${fuelL} л <span style="font-size:0.72rem;color:var(--text-secondary);">(${l100}/100)</span></span>
+                                    </div>
+                                    <div class="trip-stat-item">
+                                        <span class="trip-stat-label">Вартість</span>
+                                        <span class="trip-stat-val cost-tag">${costUah} ₴</span>
+                                    </div>
+                                </div>
+
+                                <div class="trip-card-actions">
+                                    <button class="btn-sm btn-primary" onclick="openTripDetails(${t.id})">📈 Графіки поїздки</button>
+                                    <button class="btn-sm btn-danger" onclick="deleteTrip(${t.id})">🗑️</button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
 
                     return `
-                        <div class="glass-panel trip-card">
-                            <div class="trip-card-header">
-                                <div class="trip-date">🗓️ ${dateText}</div>
-                                <span class="trip-badge ${isActive ? 'badge-active' : 'badge-completed'}">
-                                    ${isActive ? '● В процесі' : 'Завершена'}
-                                </span>
-                            </div>
-
-                            <div class="trip-card-grid" style="grid-template-columns: repeat(3, 1fr);">
-                                <div class="trip-stat-item">
-                                    <span class="trip-stat-label">Дистанція</span>
-                                    <span class="trip-stat-val">${distKm} <span style="font-size:0.75rem;font-weight:400;">km</span></span>
+                        <div class="day-group">
+                            <div class="day-summary-card">
+                                <div class="day-summary-header">
+                                    <div class="day-title-wrap">
+                                        <span class="day-title">${dayTitle}</span>
+                                        <span class="day-trips-count-badge">🚗 ${tripsBadge}</span>
+                                    </div>
+                                    <span class="day-total-cost-badge">${dayCost.toFixed(2)} ₴</span>
                                 </div>
-                                <div class="trip-stat-item">
-                                    <span class="trip-stat-label">Тривалість</span>
-                                    <span class="trip-stat-val">${durationText}</span>
-                                </div>
-                                <div class="trip-stat-item">
-                                    <span class="trip-stat-label">Сер. швидкість</span>
-                                    <span class="trip-stat-val">${avgSpd} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
-                                </div>
-                                <div class="trip-stat-item">
-                                    <span class="trip-stat-label">Макс. швидкість</span>
-                                    <span class="trip-stat-val">${maxSpd} <span style="font-size:0.75rem;font-weight:400;">km/h</span></span>
-                                </div>
-                                <div class="trip-stat-item">
-                                    <span class="trip-stat-label">Витрата</span>
-                                    <span class="trip-stat-val">${fuelL} л <span style="font-size:0.72rem;color:var(--text-secondary);">(${l100}/100)</span></span>
-                                </div>
-                                <div class="trip-stat-item">
-                                    <span class="trip-stat-label">Вартість</span>
-                                    <span class="trip-stat-val cost-tag">${costUah} ₴</span>
+                                <div class="day-summary-grid">
+                                    <div class="day-stat-item">
+                                        <span class="day-stat-label">Дистанція</span>
+                                        <span class="day-stat-val">${dayDist.toFixed(2)} <small>km</small></span>
+                                    </div>
+                                    <div class="day-stat-item">
+                                        <span class="day-stat-label">У русі</span>
+                                        <span class="day-stat-val">${formatDuration(dayDuration)}</span>
+                                    </div>
+                                    <div class="day-stat-item">
+                                        <span class="day-stat-label">Пальне</span>
+                                        <span class="day-stat-val">${dayFuel.toFixed(2)} <small>л</small><span class="sub-val">(${dayL100}/100)</span></span>
+                                    </div>
+                                    <div class="day-stat-item">
+                                        <span class="day-stat-label">Макс / Сер</span>
+                                        <span class="day-stat-val">${Math.round(dayMaxSpeed)} / ${dayAvgSpeed} <small>km/h</small></span>
+                                    </div>
                                 </div>
                             </div>
-
-                            <div class="trip-card-actions">
-                                <button class="btn-sm btn-primary" onclick="openTripDetails(${t.id})">📈 Графіки поїздки</button>
-                                <button class="btn-sm btn-danger" onclick="deleteTrip(${t.id})">🗑️</button>
+                            <div class="day-trips-list">
+                                ${tripsCardsHtml}
                             </div>
                         </div>
                     `;
                 }).join('');
+
+                listEl.innerHTML = html;
             } catch (err) {
                 listEl.innerHTML = '<div class="empty-state" style="color:#ef4444;">Помилка завантаження архіву поїздок</div>';
             }
@@ -1080,25 +1220,157 @@
                     noGpsBanner.style.display = 'block';
                 }
 
-                const labels = records.map(r => r.timestamp.split(' ')[1] || r.timestamp);
-                const speeds = records.map(r => r.speed);
-                const rpms = records.map(r => r.rpm);
+                // Calculate elapsed time from the first record for X-axis (in minutes)
+                const firstTimestamp = (records && records.length > 0) ? (records[0].timestamp || '') : '';
+                const startTime = firstTimestamp ? new Date(firstTimestamp.includes('T') ? firstTimestamp : firstTimestamp.replace(' ', 'T') + (firstTimestamp.endsWith('Z') ? '' : 'Z')).getTime() : Date.now();
+                
+                const elapsedLabels = (records || []).map(r => {
+                    if (!r.timestamp) return '0:00';
+                    const iso = r.timestamp.includes('T') ? r.timestamp : r.timestamp.replace(' ', 'T') + (r.timestamp.endsWith('Z') ? '' : 'Z');
+                    const t = new Date(iso).getTime();
+                    const sec = Math.max(0, Math.round((t - startTime) / 1000));
+                    const mins = Math.floor(sec / 60);
+                    const remSec = sec % 60;
+                    return `${mins}:${remSec < 10 ? '0' : ''}${remSec}`;
+                });
+
+                const speeds = (records || []).map(r => r.speed || 0);
+                const rpms = (records || []).map(r => r.rpm || 0);
 
                 if (modalSpeedChartInstance) modalSpeedChartInstance.destroy();
                 if (modalRpmChartInstance) modalRpmChartInstance.destroy();
 
+                function createModalChartOptions(chartTitle, datasetLabel, unitLabel) {
+                    return {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            title: {
+                                display: true,
+                                text: chartTitle,
+                                color: '#f8fafc',
+                                font: { size: 13, weight: '600', family: "'Outfit', sans-serif" },
+                                padding: { bottom: 8 }
+                            },
+                            tooltip: {
+                                backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                                borderColor: 'rgba(255, 255, 255, 0.15)',
+                                borderWidth: 1,
+                                titleColor: '#38bdf8',
+                                titleFont: { size: 12, weight: '600', family: "'Outfit', sans-serif" },
+                                bodyFont: { size: 12, family: "'Outfit', sans-serif" },
+                                padding: 10,
+                                displayColors: false,
+                                callbacks: {
+                                    title: function(items) {
+                                        if (!items || !items.length) return '';
+                                        const idx = items[0].dataIndex;
+                                        const r = records[idx];
+                                        const elapsed = elapsedLabels[idx] || '0:00';
+                                        let clockTime = '';
+                                        if (r && r.timestamp) {
+                                            try {
+                                                const iso = r.timestamp.includes('T') ? r.timestamp : r.timestamp.replace(' ', 'T') + (r.timestamp.endsWith('Z') ? '' : 'Z');
+                                                clockTime = new Date(iso).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                                            } catch (e) {
+                                                clockTime = r.timestamp.split(' ')[1] || r.timestamp;
+                                            }
+                                        }
+                                        return `⏱️ ${elapsed} хв (${clockTime})`;
+                                    },
+                                    label: function(context) {
+                                        return `${datasetLabel}: ${context.parsed.y} ${unitLabel}`;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                display: true,
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.06)',
+                                    drawBorder: false
+                                },
+                                ticks: {
+                                    autoSkip: true,
+                                    maxTicksLimit: 7,
+                                    maxRotation: 0,
+                                    color: 'rgba(148, 163, 184, 0.85)',
+                                    font: { size: 11, family: "'Outfit', sans-serif" },
+                                    callback: function(val, index) {
+                                        const label = this.getLabelForValue(val);
+                                        return label ? label + ' хв' : '';
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: '⏱️ Тривалість поїздки (хв)',
+                                    color: '#94a3b8',
+                                    font: { size: 11, weight: '500', family: "'Outfit', sans-serif" },
+                                    padding: { top: 6, bottom: 0 }
+                                }
+                            },
+                            y: {
+                                display: true,
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.08)',
+                                    drawBorder: false
+                                },
+                                ticks: {
+                                    color: 'rgba(148, 163, 184, 0.85)',
+                                    font: { size: 11, family: "'Outfit', sans-serif" }
+                                },
+                                beginAtZero: true
+                            }
+                        },
+                        elements: {
+                            point: {
+                                radius: records.length > 60 ? 0 : 2,
+                                hoverRadius: 5
+                            }
+                        }
+                    };
+                }
+
                 const ctxM1 = document.getElementById('modalSpeedChart').getContext('2d');
                 modalSpeedChartInstance = new Chart(ctxM1, {
                     type: 'line',
-                    data: { labels, datasets: [{ label: 'Швидкість (km/h)', data: speeds, borderColor: '#36a2eb', borderWidth: 2, tension: 0.3, fill: true, backgroundColor: 'rgba(54, 162, 235, 0.15)' }] },
-                    options: { ...commonOptions, plugins: { legend: { display: false }, title: { display: true, text: 'Графік швидкості (km/h)', color: '#fff' } } }
+                    data: {
+                        labels: elapsedLabels,
+                        datasets: [{
+                            label: 'Швидкість',
+                            data: speeds,
+                            borderColor: '#38bdf8',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: true,
+                            backgroundColor: 'rgba(56, 189, 248, 0.15)'
+                        }]
+                    },
+                    options: createModalChartOptions('Графік швидкості (km/h)', 'Швидкість', 'km/h')
                 });
 
                 const ctxM2 = document.getElementById('modalRpmChart').getContext('2d');
                 modalRpmChartInstance = new Chart(ctxM2, {
                     type: 'line',
-                    data: { labels, datasets: [{ label: 'Оберти двигуна (RPM)', data: rpms, borderColor: '#ff6384', borderWidth: 2, tension: 0.3, fill: true, backgroundColor: 'rgba(255, 99, 132, 0.15)' }] },
-                    options: { ...commonOptions, plugins: { legend: { display: false }, title: { display: true, text: 'Графік обертів RPM', color: '#fff' } } }
+                    data: {
+                        labels: elapsedLabels,
+                        datasets: [{
+                            label: 'Оберти RPM',
+                            data: rpms,
+                            borderColor: '#ff6384',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: true,
+                            backgroundColor: 'rgba(255, 99, 132, 0.15)'
+                        }]
+                    },
+                    options: createModalChartOptions('Графік обертів RPM', 'Оберти', 'RPM')
                 });
             } catch (err) {
                 alert('Не вдалося завантажити деталі поїздки');
@@ -1524,6 +1796,11 @@
 
             if (tab === 'map' && modalMapInstance) {
                 setTimeout(() => modalMapInstance.invalidateSize(), 150);
+            } else if (tab === 'charts') {
+                setTimeout(() => {
+                    if (modalSpeedChartInstance) modalSpeedChartInstance.resize();
+                    if (modalRpmChartInstance) modalRpmChartInstance.resize();
+                }, 100);
             }
         }
 
